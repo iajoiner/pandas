@@ -2734,7 +2734,7 @@ class DataFrame(NDFrame, OpsMixin):
             storage_options=storage_options,
             **kwargs,
         )
-    
+
     def to_orc(
         self,
         path: FilePathOrBuffer = None,
@@ -2743,7 +2743,7 @@ class DataFrame(NDFrame, OpsMixin):
         **kwargs
     ) -> bytes:
         """
-        Write a DataFrame to the orc/arrow format.
+        Write a DataFrame to the ORC format.
         Parameters
         ----------
         df : DataFrame
@@ -2751,12 +2751,12 @@ class DataFrame(NDFrame, OpsMixin):
             If a string, it will be used as Root Directory path
             when writing a partitioned dataset. By file-like object,
             we refer to objects with a write() method, such as a file handle
-            (e.g. via builtin open function) or io.BytesIO. The engine
-            fastparquet does not accept file-like objects. If path is None,
-            a bytes object is returned.
+            (e.g. via builtin open function). If path is None,
+            a bytes object is returned. Note that currently the pyarrow
+            engine doesn't work with io.BytesIO.
         engine : {{'pyarrow'}}, default 'pyarrow'
             Parquet library to use, or library it self, checked with 'pyarrow' name
-            and version > 4.0.0
+            and version >= 5.0.0
         index : bool, default None
             If ``True``, include the dataframe's index(es) in the file output. If
             ``False``, they will not be written to the file.
@@ -2786,7 +2786,7 @@ class DataFrame(NDFrame, OpsMixin):
         Examples
         --------
         >>> df = pd.DataFrame(data={{'col1': [1, 2], 'col2': [3, 4]}})
-        >>> df.to_orc('df.orc', compression='gzip')  # doctest: +SKIP
+        >>> df.to_orc('df.orc')  # doctest: +SKIP
         >>> pd.read_orc('df.orc')  # doctest: +SKIP
            col1  col2
         0     1     3
@@ -2808,7 +2808,7 @@ class DataFrame(NDFrame, OpsMixin):
             index=index,
             **kwargs
         )
-    
+
     @Substitution(
         header_type="bool",
         header="Whether to print column labels, default True",
