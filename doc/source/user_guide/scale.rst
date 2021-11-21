@@ -31,6 +31,7 @@ Assuming you want or need the expressiveness and power of pandas, let's carry on
    # Make a random in-memory dataset
    ts = _make_timeseries(freq="30S", seed=0)
    ts.to_csv("timeseries.csv")
+   ts.to_orc("timeseries.orc")
    ts.to_parquet("timeseries.parquet")
 
 
