@@ -2692,6 +2692,7 @@ class DataFrame(NDFrame, OpsMixin):
         See Also
         --------
         read_parquet : Read a parquet file.
+        DataFrame.to_orc : Write an orc file.
         DataFrame.to_csv : Write a csv file.
         DataFrame.to_sql : Write to a sql table.
         DataFrame.to_hdf : Write to hdf.
@@ -2781,7 +2782,8 @@ class DataFrame(NDFrame, OpsMixin):
 
         Notes
         -----
-        This function requires `pyarrow <https://arrow.apache.org/docs/python/>`_ library.
+        This function requires `pyarrow <https://arrow.apache.org/docs/python/>`
+        _ library.
 
         Examples
         --------
