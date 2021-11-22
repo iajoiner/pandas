@@ -399,12 +399,14 @@ pandas uses `mypy <http://mypy-lang.org>`_ and `pyright <https://github.com/micr
 
 .. code-block:: shell
 
-   mypy pandas
+   mypy
 
    # let pre-commit setup and run pyright
-   pre-commit run --all-files pyright
+   pre-commit run --hook-stage manual --all-files pyright
    # or if pyright is installed (requires node.js)
    pyright
+
+A recent version of ``numpy`` (>=1.21.0) is required for type validation.
 
 .. _contributing.ci:
 
