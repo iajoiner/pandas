@@ -56,6 +56,7 @@ from pandas._typing import (
     CompressionOptions,
     Dtype,
     DtypeObj,
+    FilePath,
     FilePathOrBuffer,
     FillnaOptions,
     FloatFormatType,
@@ -72,6 +73,7 @@ from pandas._typing import (
     TimedeltaConvertibleTypes,
     TimestampConvertibleTypes,
     ValueKeyFunc,
+    WriteBuffer,
     npt,
 )
 from pandas.compat._optional import import_optional_dependency
@@ -2738,8 +2740,8 @@ class DataFrame(NDFrame, OpsMixin):
 
     def to_orc(
         self,
-        path: FilePathOrBuffer = None,
-        engine: str = 'pyarrow',
+        path: FilePath | WriteBuffer[bytes] | None = None,
+        engine: Literal['pyarrow'] = 'pyarrow',
         index: bool = None,
         **kwargs
     ) -> bytes:
