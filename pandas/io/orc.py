@@ -9,7 +9,6 @@ from tempfile import gettempdir
 
 from pandas._typing import (
     FilePath,
-    FilePathOrBuffer,
     WriteBuffer,
     ReadBuffer,
 )
