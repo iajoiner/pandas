@@ -20,7 +20,7 @@ Instructions for installing from source,
 Python version support
 ----------------------
 
-Officially Python 3.8, and 3.9.
+Officially Python 3.8, 3.9 and 3.10.
 
 Installing pandas
 -----------------
@@ -361,7 +361,7 @@ blosc                     1.20.1             Compression for HDF5
 zlib                                         Compression for HDF5
 fastparquet               0.4.0              Parquet reading / writing
 pyarrow                   1.0.1              Parquet, ORC, and feather reading / writing
-pyreadstat                                   SPSS files (.sav) reading
+pyreadstat                1.1.0              SPSS files (.sav) reading
 ========================= ================== =============================================================
 
 .. _install.warn_orc:
