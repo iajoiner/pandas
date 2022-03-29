@@ -111,4 +111,3 @@ def to_orc(
         assert isinstance(path_or_buf, io.BytesIO)
         return path_or_buf.getvalue()
     return None
-
