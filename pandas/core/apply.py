@@ -33,6 +33,10 @@ from pandas._typing import (
     Axis,
     NDFrameT,
 )
+from pandas.errors import (
+    DataError,
+    SpecificationError,
+)
 from pandas.util._decorators import cache_readonly
 from pandas.util._exceptions import find_stack_level
 
@@ -50,11 +54,7 @@ from pandas.core.dtypes.generic import (
 )
 
 from pandas.core.algorithms import safe_sort
-from pandas.core.base import (
-    DataError,
-    SelectionMixin,
-    SpecificationError,
-)
+from pandas.core.base import SelectionMixin
 import pandas.core.common as com
 from pandas.core.construction import (
     create_series_with_explicit_dtype,
@@ -325,6 +325,9 @@ class Apply(metaclass=abc.ABCMeta):
         obj = self.obj
         arg = cast(List[AggFuncTypeBase], self.f)
 
+        if getattr(obj, "axis", 0) == 1:
+            raise NotImplementedError("axis other than 0 is not supported")
+
         if not isinstance(obj, SelectionMixin):
             # i.e. obj is Series or DataFrame
             selected_obj = obj
@@ -455,6 +458,9 @@ class Apply(metaclass=abc.ABCMeta):
 
         obj = self.obj
         arg = cast(AggFuncTypeDict, self.f)
+
+        if getattr(obj, "axis", 0) == 1:
+            raise NotImplementedError("axis other than 0 is not supported")
 
         if not isinstance(obj, SelectionMixin):
             # i.e. obj is Series or DataFrame
