@@ -62,7 +62,7 @@ class ObjectStringArrayMixin(BaseStringArrayMethods):
             na_value = self._str_na_value
 
         if not len(self):
-            return np.ndarray(0, dtype=dtype)
+            return np.array([], dtype=dtype)
 
         arr = np.asarray(self, dtype=object)
         mask = isna(arr)
@@ -193,7 +193,7 @@ class ObjectStringArrayMixin(BaseStringArrayMethods):
             return result
 
     def _str_match(
-        self, pat: str, case: bool = True, flags: int = 0, na: Scalar = None
+        self, pat: str, case: bool = True, flags: int = 0, na: Scalar | None = None
     ):
         if not case:
             flags |= re.IGNORECASE
@@ -208,7 +208,7 @@ class ObjectStringArrayMixin(BaseStringArrayMethods):
         pat: str | re.Pattern,
         case: bool = True,
         flags: int = 0,
-        na: Scalar = None,
+        na: Scalar | None = None,
     ):
         if not case:
             flags |= re.IGNORECASE
@@ -434,9 +434,9 @@ class ObjectStringArrayMixin(BaseStringArrayMethods):
         return self._str_map(lambda x: x.rstrip(to_strip))
 
     def _str_removeprefix(self, prefix: str) -> Series:
-        # outstanding question on whether to use native methods for users
-        # on Python 3.9+ https://git.io/JE9QK, in which case we could do
-        # return self._str_map(str.removeprefix)
+        # outstanding question on whether to use native methods for users on Python 3.9+
+        # https://github.com/pandas-dev/pandas/pull/39226#issuecomment-836719770,
+        # in which case we could do return self._str_map(str.removeprefix)
 
         def removeprefix(text: str) -> str:
             if text.startswith(prefix):

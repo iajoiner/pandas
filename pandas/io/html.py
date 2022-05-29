@@ -12,6 +12,7 @@ import re
 from typing import (
     Pattern,
     Sequence,
+    cast,
 )
 
 from pandas._typing import (
@@ -47,7 +48,7 @@ _HAS_LXML = False
 _HAS_HTML5LIB = False
 
 
-def _importers():
+def _importers() -> None:
     # import things we need
     # but make this done on a first use basis
 
@@ -93,7 +94,7 @@ def _remove_whitespace(s: str, regex: Pattern = _RE_WHITESPACE) -> str:
     return regex.sub(" ", s.strip())
 
 
-def _get_skiprows(skiprows: int | Sequence[int] | slice | None):
+def _get_skiprows(skiprows: int | Sequence[int] | slice | None) -> int | Sequence[int]:
     """
     Get an iterator given an integer, slice or container.
 
@@ -116,7 +117,7 @@ def _get_skiprows(skiprows: int | Sequence[int] | slice | None):
         start, step = skiprows.start or 0, skiprows.step or 1
         return list(range(start, skiprows.stop, step))
     elif isinstance(skiprows, numbers.Integral) or is_list_like(skiprows):
-        return skiprows
+        return cast("int | Sequence[int]", skiprows)
     elif skiprows is None:
         return 0
     raise TypeError(f"{type(skiprows).__name__} is not a valid type for skipping rows")
@@ -220,7 +221,7 @@ class _HtmlFrameParser:
         attrs: dict[str, str] | None,
         encoding: str,
         displayed_only: bool,
-    ):
+    ) -> None:
         self.io = io
         self.match = match
         self.attrs = attrs
@@ -554,7 +555,7 @@ class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
     :class:`pandas.io.html._HtmlFrameParser`.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         from bs4 import SoupStrainer
 
@@ -576,7 +577,7 @@ class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
                 for elem in table.find_all(style=re.compile(r"display:\s*none")):
                     elem.decompose()
 
-            if table not in unique_tables and table.find(text=match) is not None:
+            if table not in unique_tables and table.find(string=match) is not None:
                 result.append(table)
             unique_tables.add(table)
 
@@ -621,7 +622,13 @@ class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
         else:
             udoc = bdoc
             from_encoding = self.encoding
-        return BeautifulSoup(udoc, features="html5lib", from_encoding=from_encoding)
+
+        soup = BeautifulSoup(udoc, features="html5lib", from_encoding=from_encoding)
+
+        for br in soup.find_all("br"):
+            br.replace_with("\n" + br.text)
+
+        return soup
 
 
 def _build_xpath_expr(attrs) -> str:
@@ -758,6 +765,10 @@ class _LxmlFrameParser(_HtmlFrameParser):
         else:
             if not hasattr(r, "text_content"):
                 raise XMLSyntaxError("no text parsed from document", 0, 0, 0)
+
+        for br in r.xpath("*//br"):
+            br.tail = "\n" + (br.tail or "")
+
         return r
 
     def _parse_thead_tr(self, table):

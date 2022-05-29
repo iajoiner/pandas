@@ -23,9 +23,11 @@ ndarray_obj_2d = np.ndarray
 
 from enum import Enum
 
-class NoDefault(Enum): ...
+class _NoDefault(Enum):
+    no_default = ...
 
-no_default: NoDefault
+no_default = _NoDefault.no_default
+NoDefault = Literal[_NoDefault.no_default]
 
 i8max: int
 u8max: int
@@ -157,10 +159,9 @@ def ensure_string_array(
 def infer_datetimelike_array(
     arr: npt.NDArray[np.object_],
 ) -> tuple[str, bool]: ...
-def astype_intsafe(
+def convert_nans_to_NA(
     arr: npt.NDArray[np.object_],
-    new_dtype: np.dtype,
-) -> np.ndarray: ...
+) -> npt.NDArray[np.object_]: ...
 def fast_zip(ndarrays: list) -> npt.NDArray[np.object_]: ...
 
 # TODO: can we be more specific about rows?
@@ -228,3 +229,4 @@ def get_reverse_indexer(
     length: int,
 ) -> npt.NDArray[np.intp]: ...
 def is_bool_list(obj: list) -> bool: ...
+def dtypes_all_equal(types: list[DtypeObj]) -> bool: ...

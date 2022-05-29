@@ -58,13 +58,17 @@ import re
 from typing import (
     Any,
     Callable,
+    Generic,
     Iterable,
     NamedTuple,
     cast,
 )
 import warnings
 
-from pandas._typing import F
+from pandas._typing import (
+    F,
+    T,
+)
 
 
 class DeprecatedOption(NamedTuple):
@@ -98,7 +102,7 @@ _reserved_keys: list[str] = ["all"]
 class OptionError(AttributeError, KeyError):
     """
     Exception for pandas.options, backwards compatible with KeyError
-    checks
+    checks.
     """
 
 
@@ -124,7 +128,7 @@ def _get_single_key(pat: str, silent: bool) -> str:
     return key
 
 
-def _get_option(pat: str, silent: bool = False):
+def _get_option(pat: str, silent: bool = False) -> Any:
     key = _get_single_key(pat, silent)
 
     # walk the nested dict
@@ -164,7 +168,7 @@ def _set_option(*args, **kwargs) -> None:
                 o.cb(key)
 
 
-def _describe_option(pat: str = "", _print_desc: bool = True):
+def _describe_option(pat: str = "", _print_desc: bool = True) -> str | None:
 
     keys = _select_options(pat)
     if len(keys) == 0:
@@ -174,8 +178,8 @@ def _describe_option(pat: str = "", _print_desc: bool = True):
 
     if _print_desc:
         print(s)
-    else:
-        return s
+        return None
+    return s
 
 
 def _reset_option(pat: str, silent: bool = False) -> None:
@@ -204,7 +208,7 @@ def get_default_val(pat: str):
 class DictWrapper:
     """provide attribute-style access to a nested dict"""
 
-    def __init__(self, d: dict[str, Any], prefix: str = ""):
+    def __init__(self, d: dict[str, Any], prefix: str = "") -> None:
         object.__setattr__(self, "d", d)
         object.__setattr__(self, "prefix", prefix)
 
@@ -247,16 +251,17 @@ class DictWrapper:
 # of options, and option descriptions.
 
 
-class CallableDynamicDoc:
-    def __init__(self, func, doc_tmpl):
+class CallableDynamicDoc(Generic[T]):
+    def __init__(self, func: Callable[..., T], doc_tmpl: str) -> None:
         self.__doc_tmpl__ = doc_tmpl
         self.__func__ = func
 
-    def __call__(self, *args, **kwds):
+    def __call__(self, *args, **kwds) -> T:
         return self.__func__(*args, **kwds)
 
+    # error: Signature of "__doc__" incompatible with supertype "object"
     @property
-    def __doc__(self):
+    def __doc__(self) -> str:  # type: ignore[override]
         opts_desc = _describe_option("all", _print_desc=False)
         opts_list = pp_options_list(list(_registered_options.keys()))
         return self.__doc_tmpl__.format(opts_desc=opts_desc, opts_list=opts_list)
@@ -289,6 +294,8 @@ OptionError : if no such option exists
 
 Notes
 -----
+Please reference the :ref:`User Guide <options>` for more information.
+
 The available options with its descriptions:
 
 {opts_desc}
@@ -323,6 +330,8 @@ OptionError if no such option exists
 
 Notes
 -----
+Please reference the :ref:`User Guide <options>` for more information.
+
 The available options with its descriptions:
 
 {opts_desc}
@@ -333,7 +342,7 @@ describe_option(pat, _print_desc=False)
 
 Prints the description for one or more registered options.
 
-Call with not arguments to get a listing for all registered options.
+Call with no arguments to get a listing for all registered options.
 
 Available options:
 
@@ -355,6 +364,8 @@ is False
 
 Notes
 -----
+Please reference the :ref:`User Guide <options>` for more information.
+
 The available options with its descriptions:
 
 {opts_desc}
@@ -385,6 +396,8 @@ None
 
 Notes
 -----
+Please reference the :ref:`User Guide <options>` for more information.
+
 The available options with its descriptions:
 
 {opts_desc}
@@ -411,10 +424,10 @@ class option_context(ContextDecorator):
     Examples
     --------
     >>> with option_context('display.max_rows', 10, 'display.max_columns', 5):
-    ...     ...
+    ...     pass
     """
 
-    def __init__(self, *args):
+    def __init__(self, *args) -> None:
         if len(args) % 2 != 0 or len(args) < 2:
             raise ValueError(
                 "Need to invoke as option_context(pat, val, [(pat, val), ...])."
@@ -642,7 +655,6 @@ def _warn_if_deprecated(key: str) -> bool:
     d = _get_deprecated_option(key)
     if d:
         if d.msg:
-            print(d.msg)
             warnings.warn(d.msg, FutureWarning)
         else:
             msg = f"'{key}' is deprecated"
@@ -763,10 +775,12 @@ def config_prefix(prefix):
     set_option = wrap(set_option)
     get_option = wrap(get_option)
     register_option = wrap(register_option)
-    yield None
-    set_option = _set_option
-    get_option = _get_option
-    register_option = _register_option
+    try:
+        yield
+    finally:
+        set_option = _set_option
+        get_option = _get_option
+        register_option = _register_option
 
 
 # These factories and methods are handy for use as the validator

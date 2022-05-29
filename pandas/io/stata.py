@@ -61,12 +61,12 @@ from pandas import (
     to_datetime,
     to_timedelta,
 )
-from pandas.core import generic
 from pandas.core.arrays.boolean import BooleanDtype
-from pandas.core.arrays.integer import _IntegerDtype
+from pandas.core.arrays.integer import IntegerDtype
 from pandas.core.frame import DataFrame
 from pandas.core.indexes.base import Index
 from pandas.core.series import Series
+from pandas.core.shared_docs import _shared_docs
 
 from pandas.io.common import get_handle
 
@@ -109,19 +109,6 @@ chunksize : int, default None
     Return StataReader object for iterations, returns chunks with
     given number of lines."""
 
-_compression_params = f"""\
-compression : str or dict, default None
-    If string, specifies compression mode. If dict, value at key 'method'
-    specifies compression mode. Compression mode must be one of {{'infer',
-    'gzip', 'bz2', 'zip', 'xz', None}}. If compression mode is 'infer'
-    and `filepath_or_buffer` is path-like, then detect compression from
-    the following extensions: '.gz', '.bz2', '.zip', or '.xz' (otherwise
-    no compression). If dict and compression mode is one of
-    {{'zip', 'gzip', 'bz2'}}, or inferred as one of the above,
-    other entries passed as additional compression options.
-{generic._shared_docs["storage_options"]}"""
-
-
 _iterator_params = """\
 iterator : bool, default False
     Return StataReader object."""
@@ -153,7 +140,8 @@ filepath_or_buffer : str, path object or file-like object
 {_statafile_processing_params2}
 {_chunksize_params}
 {_iterator_params}
-{_compression_params}
+{_shared_docs["decompression_options"]}
+{_shared_docs["storage_options"]}
 
 Returns
 -------
@@ -172,26 +160,22 @@ Examples
 Creating a dummy stata for this example
 >>> df = pd.DataFrame({{'animal': ['falcon', 'parrot', 'falcon',
 ...                              'parrot'],
-...                   'speed': [350, 18, 361, 15]}})
->>> df.to_stata('animals.dta')
+...                   'speed': [350, 18, 361, 15]}})  # doctest: +SKIP
+>>> df.to_stata('animals.dta')  # doctest: +SKIP
 
 Read a Stata dta file:
 
->>> df = pd.read_stata('animals.dta')
+>>> df = pd.read_stata('animals.dta')  # doctest: +SKIP
 
 Read a Stata dta file in 10,000 line chunks:
->>> values = np.random.randint(0, 10, size=(20_000, 1), dtype="uint8")
->>> df = pd.DataFrame(values, columns=["i"])
->>> df.to_stata('filename.dta')
+>>> values = np.random.randint(0, 10, size=(20_000, 1), dtype="uint8")  # doctest: +SKIP
+>>> df = pd.DataFrame(values, columns=["i"])  # doctest: +SKIP
+>>> df.to_stata('filename.dta')  # doctest: +SKIP
 
->>> itr = pd.read_stata('filename.dta', chunksize=10000)
+>>> itr = pd.read_stata('filename.dta', chunksize=10000)  # doctest: +SKIP
 >>> for chunk in itr:
 ...    # Operate on a single chunk, e.g., chunk.mean()
-...    pass
-
->>> import os
->>> os.remove("./filename.dta")
->>> os.remove("./animals.dta")
+...    pass  # doctest: +SKIP
 """
 
 _read_method_doc = f"""\
@@ -220,7 +204,8 @@ path_or_buf : path (string), buffer or path object
 {_statafile_processing_params1}
 {_statafile_processing_params2}
 {_chunksize_params}
-{_compression_params}
+{_shared_docs["decompression_options"]}
+{_shared_docs["storage_options"]}
 
 {_reader_notes}
 """
@@ -587,7 +572,13 @@ def _cast_to_stata_types(data: DataFrame) -> DataFrame:
     """
     ws = ""
     # original, if small, if large
-    conversion_data = (
+    conversion_data: tuple[
+        tuple[type, type, type],
+        tuple[type, type, type],
+        tuple[type, type, type],
+        tuple[type, type, type],
+        tuple[type, type, type],
+    ] = (
         (np.bool_, np.int8, np.int8),
         (np.uint8, np.int8, np.int16),
         (np.uint16, np.int16, np.int32),
@@ -600,7 +591,7 @@ def _cast_to_stata_types(data: DataFrame) -> DataFrame:
 
     for col in data:
         # Cast from unsupported types to supported types
-        is_nullable_int = isinstance(data[col].dtype, (_IntegerDtype, BooleanDtype))
+        is_nullable_int = isinstance(data[col].dtype, (IntegerDtype, BooleanDtype))
         orig = data[col]
         # We need to find orig_missing before altering data below
         orig_missing = orig.isna()
@@ -608,7 +599,8 @@ def _cast_to_stata_types(data: DataFrame) -> DataFrame:
             missing_loc = data[col].isna()
             if missing_loc.any():
                 # Replace with always safe value
-                data.loc[missing_loc, col] = 0
+                fv = 0 if isinstance(data[col].dtype, IntegerDtype) else False
+                data.loc[missing_loc, col] = fv
             # Replace with NumPy-compatible column
             data[col] = data[col].astype(data[col].dtype.numpy_dtype)
         dtype = data[col].dtype
@@ -619,7 +611,7 @@ def _cast_to_stata_types(data: DataFrame) -> DataFrame:
                 else:
                     dtype = c_data[2]
                 if c_data[2] == np.int64:  # Warn if necessary
-                    if data[col].max() >= 2 ** 53:
+                    if data[col].max() >= 2**53:
                         ws = precision_loss_doc.format("uint64", "float64")
 
                 data[col] = data[col].astype(dtype)
@@ -636,15 +628,15 @@ def _cast_to_stata_types(data: DataFrame) -> DataFrame:
                 data[col] = data[col].astype(np.int32)
             else:
                 data[col] = data[col].astype(np.float64)
-                if data[col].max() >= 2 ** 53 or data[col].min() <= -(2 ** 53):
+                if data[col].max() >= 2**53 or data[col].min() <= -(2**53):
                     ws = precision_loss_doc.format("int64", "float64")
         elif dtype in (np.float32, np.float64):
-            value = data[col].max()
-            if np.isinf(value):
+            if np.isinf(data[col]).any():
                 raise ValueError(
-                    f"Column {col} has a maximum value of infinity which is outside "
-                    "the range supported by Stata."
+                    f"Column {col} contains infinity or -infinity"
+                    "which is outside the range supported by Stata."
                 )
+            value = data[col].max()
             if dtype == np.float32 and value > float32_max:
                 data[col] = data[col].astype(np.float64)
             elif dtype == np.float64:
@@ -676,7 +668,7 @@ class StataValueLabel:
         Encoding to use for value labels.
     """
 
-    def __init__(self, catarray: Series, encoding: str = "latin-1"):
+    def __init__(self, catarray: Series, encoding: str = "latin-1") -> None:
 
         if encoding not in ("latin-1", "utf-8"):
             raise ValueError("Only latin-1 and utf-8 are supported.")
@@ -697,9 +689,9 @@ class StataValueLabel:
         self.txt: list[bytes] = []
         self.n = 0
         # Offsets (length of categories), converted to int32
-        self.off = np.array([])
+        self.off = np.array([], dtype=np.int32)
         # Values, converted to int32
-        self.val = np.array([])
+        self.val = np.array([], dtype=np.int32)
         self.len = 0
 
         # Compute lengths and setup lists of offsets and labels
@@ -805,7 +797,7 @@ class StataNonCatValueLabel(StataValueLabel):
         labname: str,
         value_labels: dict[float | int, str],
         encoding: Literal["latin-1", "utf-8"] = "latin-1",
-    ):
+    ) -> None:
 
         if encoding not in ("latin-1", "utf-8"):
             raise ValueError("Only latin-1 and utf-8 are supported.")
@@ -892,7 +884,7 @@ class StataMissingValue:
         "float64": struct.unpack("<d", float64_base)[0],
     }
 
-    def __init__(self, value: int | float):
+    def __init__(self, value: int | float) -> None:
         self._value = value
         # Conversion to int to avoid hash issues on 32 bit platforms #8968
         value = int(value) if value < 2147483648 else float(value)
@@ -953,7 +945,7 @@ class StataMissingValue:
 
 
 class StataParser:
-    def __init__(self):
+    def __init__(self) -> None:
 
         # type          code.
         # --------------------
@@ -980,7 +972,7 @@ class StataParser:
                 (255, np.dtype(np.float64)),
             ]
         )
-        self.DTYPE_MAP_XML = {
+        self.DTYPE_MAP_XML: dict[int, np.dtype] = {
             32768: np.dtype(np.uint8),  # Keys to GSO
             65526: np.dtype(np.float64),
             65527: np.dtype(np.float32),
@@ -988,9 +980,7 @@ class StataParser:
             65529: np.dtype(np.int16),
             65530: np.dtype(np.int8),
         }
-        # error: Argument 1 to "list" has incompatible type "str";
-        #  expected "Iterable[int]"  [arg-type]
-        self.TYPE_MAP = list(range(251)) + list("bhlfd")  # type: ignore[arg-type]
+        self.TYPE_MAP = list(tuple(range(251)) + tuple("bhlfd"))
         self.TYPE_MAP_XML = {
             # Not really a Q, unclear how to handle byteswap
             32768: "Q",
@@ -1130,7 +1120,7 @@ class StataReader(StataParser, abc.Iterator):
         chunksize: int | None = None,
         compression: CompressionOptions = "infer",
         storage_options: StorageOptions = None,
-    ):
+    ) -> None:
         super().__init__()
         self.col_sizes: list[int] = []
 
@@ -1309,9 +1299,7 @@ class StataReader(StataParser, abc.Iterator):
             if typ <= 2045:
                 return str(typ)
             try:
-                # error: Incompatible return value type (got "Type[number]", expected
-                # "Union[str, dtype]")
-                return self.DTYPE_MAP_XML[typ]  # type: ignore[return-value]
+                return self.DTYPE_MAP_XML[typ]
             except KeyError as err:
                 raise ValueError(f"cannot convert stata dtype [{typ}]") from err
 
@@ -1694,7 +1682,7 @@ the string values returned are correct."""
         offset = self._lines_read * dtype.itemsize
         self.path_or_buf.seek(self.data_location + offset)
         read_lines = min(nrows, self.nobs - self._lines_read)
-        data = np.frombuffer(
+        raw_data = np.frombuffer(
             self.path_or_buf.read(read_len), dtype=dtype, count=read_lines
         )
 
@@ -1704,22 +1692,22 @@ the string values returned are correct."""
             self._data_read = True
         # if necessary, swap the byte order to native here
         if self.byteorder != self._native_byteorder:
-            data = data.byteswap().newbyteorder()
+            raw_data = raw_data.byteswap().newbyteorder()
 
         if convert_categoricals:
             self._read_value_labels()
 
-        if len(data) == 0:
+        if len(raw_data) == 0:
             data = DataFrame(columns=self.varlist)
         else:
-            data = DataFrame.from_records(data)
-            data.columns = self.varlist
+            data = DataFrame.from_records(raw_data)
+            data.columns = Index(self.varlist)
 
         # If index is not specified, use actual row number rather than
         # restarting at 0 for each chunk.
         if index_col is None:
-            ix = np.arange(self._lines_read - read_lines, self._lines_read)
-            data.index = ix  # set attr instead of set_index to avoid copy
+            rng = np.arange(self._lines_read - read_lines, self._lines_read)
+            data.index = Index(rng)  # set attr instead of set_index to avoid copy
 
         if columns is not None:
             try:
@@ -2174,7 +2162,10 @@ def _dtype_to_default_stata_fmt(
         raise NotImplementedError(f"Data type {dtype} not supported.")
 
 
-@doc(storage_options=generic._shared_docs["storage_options"])
+@doc(
+    storage_options=_shared_docs["storage_options"],
+    compression_options=_shared_docs["compression_options"] % "fname",
+)
 class StataWriter(StataParser):
     """
     A class for writing Stata binary dta files
@@ -2206,17 +2197,11 @@ class StataWriter(StataParser):
     variable_labels : dict
         Dictionary containing columns as keys and variable labels as values.
         Each label must be 80 characters or smaller.
-    compression : str or dict, default 'infer'
-        For on-the-fly compression of the output dta. If string, specifies
-        compression mode. If dict, value at key 'method' specifies compression
-        mode. Compression mode must be one of {{'infer', 'gzip', 'bz2', 'zip',
-        'xz', None}}. If compression mode is 'infer' and `fname` is path-like,
-        then detect compression from the following extensions: '.gz', '.bz2',
-        '.zip', or '.xz' (otherwise no compression). If dict and compression
-        mode is one of {{'zip', 'gzip', 'bz2'}}, or inferred as one of the above,
-        other entries passed as additional compression options.
+    {compression_options}
 
         .. versionadded:: 1.1.0
+
+        .. versionchanged:: 1.4.0 Zstandard support.
 
     {storage_options}
 
@@ -2281,7 +2266,7 @@ class StataWriter(StataParser):
         storage_options: StorageOptions = None,
         *,
         value_labels: dict[Hashable, dict[float | int, str]] | None = None,
-    ):
+    ) -> None:
         super().__init__()
         self.data = data
         self._convert_dates = {} if convert_dates is None else convert_dates
@@ -2623,6 +2608,9 @@ supported types."""
                     self.data[col] = encoded
 
     def write_file(self) -> None:
+        """
+        Export DataFrame object to Stata dta format.
+        """
         with get_handle(
             self._fname,
             "wb",
@@ -2956,7 +2944,7 @@ class StataStrLWriter:
         columns: Sequence[str],
         version: int = 117,
         byteorder: str | None = None,
-    ):
+    ) -> None:
         if version not in (117, 118, 119):
             raise ValueError("Only dta versions 117, 118 and 119 supported")
         self._dta_ver = version
@@ -3139,17 +3127,11 @@ class StataWriter117(StataWriter):
         Smaller columns can be converted by including the column name.  Using
         StrLs can reduce output file size when strings are longer than 8
         characters, and either frequently repeated or sparse.
-    compression : str or dict, default 'infer'
-        For on-the-fly compression of the output dta. If string, specifies
-        compression mode. If dict, value at key 'method' specifies compression
-        mode. Compression mode must be one of {'infer', 'gzip', 'bz2', 'zip',
-        'xz', None}. If compression mode is 'infer' and `fname` is path-like,
-        then detect compression from the following extensions: '.gz', '.bz2',
-        '.zip', or '.xz' (otherwise no compression). If dict and compression
-        mode is one of {'zip', 'gzip', 'bz2'}, or inferred as one of the above,
-        other entries passed as additional compression options.
+    {compression_options}
 
         .. versionadded:: 1.1.0
+
+        .. versionchanged:: 1.4.0 Zstandard support.
 
     value_labels : dict of dicts
         Dictionary containing columns as keys and dictionaries of column value
@@ -3177,21 +3159,22 @@ class StataWriter117(StataWriter):
 
     Examples
     --------
-    >>> from pandas.io.stata import StataWriter117
     >>> data = pd.DataFrame([[1.0, 1, 'a']], columns=['a', 'b', 'c'])
-    >>> writer = StataWriter117('./data_file.dta', data)
+    >>> writer = pd.io.stata.StataWriter117('./data_file.dta', data)
     >>> writer.write_file()
 
     Directly write a zip file
     >>> compression = {"method": "zip", "archive_name": "data_file.dta"}
-    >>> writer = StataWriter117('./data_file.zip', data, compression=compression)
+    >>> writer = pd.io.stata.StataWriter117(
+    ...     './data_file.zip', data, compression=compression
+    ...     )
     >>> writer.write_file()
 
     Or with long strings stored in strl format
     >>> data = pd.DataFrame([['A relatively long string'], [''], ['']],
     ...                     columns=['strls'])
-    >>> writer = StataWriter117('./data_file_with_long_strings.dta', data,
-    ...                         convert_strl=['strls'])
+    >>> writer = pd.io.stata.StataWriter117(
+    ...     './data_file_with_long_strings.dta', data, convert_strl=['strls'])
     >>> writer.write_file()
     """
 
@@ -3213,7 +3196,7 @@ class StataWriter117(StataWriter):
         storage_options: StorageOptions = None,
         *,
         value_labels: dict[Hashable, dict[float | int, str]] | None = None,
-    ):
+    ) -> None:
         # Copy to new list since convert_strl might be modified later
         self._convert_strl: list[Hashable] = []
         if convert_strl is not None:
@@ -3539,17 +3522,11 @@ class StataWriterUTF8(StataWriter117):
         The dta version to use. By default, uses the size of data to determine
         the version. 118 is used if data.shape[1] <= 32767, and 119 is used
         for storing larger DataFrames.
-    compression : str or dict, default 'infer'
-        For on-the-fly compression of the output dta. If string, specifies
-        compression mode. If dict, value at key 'method' specifies compression
-        mode. Compression mode must be one of {'infer', 'gzip', 'bz2', 'zip',
-        'xz', None}. If compression mode is 'infer' and `fname` is path-like,
-        then detect compression from the following extensions: '.gz', '.bz2',
-        '.zip', or '.xz' (otherwise no compression). If dict and compression
-        mode is one of {'zip', 'gzip', 'bz2'}, or inferred as one of the above,
-        other entries passed as additional compression options.
+    {compression_options}
 
         .. versionadded:: 1.1.0
+
+        .. versionchanged:: 1.4.0 Zstandard support.
 
     value_labels : dict of dicts
         Dictionary containing columns as keys and dictionaries of column value
@@ -3616,7 +3593,7 @@ class StataWriterUTF8(StataWriter117):
         storage_options: StorageOptions = None,
         *,
         value_labels: dict[Hashable, dict[float | int, str]] | None = None,
-    ):
+    ) -> None:
         if version is None:
             version = 118 if data.shape[1] <= 32767 else 119
         elif version not in (118, 119):

@@ -4,6 +4,10 @@ import re
 
 import pytest
 
+from pandas.compat import (
+    IS64,
+    is_ci_environment,
+)
 from pandas.util._print_versions import (
     _get_dependency_info,
     _get_sys_info,
@@ -32,6 +36,7 @@ import pandas as pd
     # https://github.com/pandas-dev/pandas/issues/35252
     "ignore:Distutils:UserWarning"
 )
+@pytest.mark.filterwarnings("ignore:Setuptools is replacing distutils:UserWarning")
 def test_show_versions(tmpdir):
     # GH39701
     as_json = os.path.join(tmpdir, "test_output.json")
@@ -68,6 +73,9 @@ def test_show_versions_console_json(capsys):
     assert result == expected
 
 
+@pytest.mark.xfail(
+    is_ci_environment() and not IS64, reason="Failing on 32 bit Python CI job"
+)
 def test_show_versions_console(capsys):
     # gh-32041
     # gh-32041
@@ -82,7 +90,9 @@ def test_show_versions_console(capsys):
 
     # check required dependency
     # 2020-12-09 npdev has "dirty" in the tag
-    assert re.search(r"numpy\s*:\s([0-9\.\+a-g\_]|dev)+(dirty)?\n", result)
+    # 2022-05-25 npdev released with RC wo/ "dirty".
+    # Just ensure we match [0-9]+\..* since npdev version is variable
+    assert re.search(r"numpy\s*:\s[0-9]+\..*\n", result)
 
     # check optional dependency
     assert re.search(r"pyarrow\s*:\s([0-9\.]+|None)\n", result)

@@ -3,16 +3,24 @@ Helpers for configuring locale settings.
 
 Name `localization` is chosen to avoid overlap with builtin `locale` module.
 """
+from __future__ import annotations
+
 from contextlib import contextmanager
 import locale
 import re
 import subprocess
+from typing import (
+    Callable,
+    Iterator,
+)
 
 from pandas._config.config import options
 
 
 @contextmanager
-def set_locale(new_locale, lc_var: int = locale.LC_ALL):
+def set_locale(
+    new_locale: str | tuple[str, str], lc_var: int = locale.LC_ALL
+) -> Iterator[str | tuple[str, str]]:
     """
     Context manager for temporarily setting a locale.
 
@@ -37,7 +45,9 @@ def set_locale(new_locale, lc_var: int = locale.LC_ALL):
         locale.setlocale(lc_var, new_locale)
         normalized_locale = locale.getlocale()
         if all(x is not None for x in normalized_locale):
-            yield ".".join(normalized_locale)
+            # error: Argument 1 to "join" of "str" has incompatible type
+            # "Tuple[Optional[str], Optional[str]]"; expected "Iterable[str]"
+            yield ".".join(normalized_locale)  # type: ignore[arg-type]
         else:
             yield new_locale
     finally:
@@ -71,7 +81,7 @@ def can_set_locale(lc: str, lc_var: int = locale.LC_ALL) -> bool:
         return True
 
 
-def _valid_locales(locales, normalize):
+def _valid_locales(locales: list[str] | str, normalize: bool) -> list[str]:
     """
     Return a list of normalized locales that do not throw an ``Exception``
     when set.
@@ -98,11 +108,15 @@ def _valid_locales(locales, normalize):
     ]
 
 
-def _default_locale_getter():
+def _default_locale_getter() -> bytes:
     return subprocess.check_output(["locale -a"], shell=True)
 
 
-def get_locales(prefix=None, normalize=True, locale_getter=_default_locale_getter):
+def get_locales(
+    prefix: str | None = None,
+    normalize: bool = True,
+    locale_getter: Callable[[], bytes] = _default_locale_getter,
+) -> list[str] | None:
     """
     Get all the locales that are available on the system.
 
@@ -142,9 +156,9 @@ def get_locales(prefix=None, normalize=True, locale_getter=_default_locale_gette
         # raw_locales is "\n" separated list of locales
         # it may contain non-decodable parts, so split
         # extract what we can and then rejoin.
-        raw_locales = raw_locales.split(b"\n")
+        split_raw_locales = raw_locales.split(b"\n")
         out_locales = []
-        for x in raw_locales:
+        for x in split_raw_locales:
             try:
                 out_locales.append(str(x, encoding=options.display.encoding))
             except UnicodeError:

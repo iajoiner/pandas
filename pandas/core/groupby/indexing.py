@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import (
     TYPE_CHECKING,
     Iterable,
+    Literal,
     cast,
 )
 
@@ -244,7 +245,7 @@ class GroupByIndexingMixin:
 
 @doc(GroupByIndexingMixin._positional_selector)
 class GroupByPositionalSelector:
-    def __init__(self, groupby_object: groupby.GroupBy):
+    def __init__(self, groupby_object: groupby.GroupBy) -> None:
         self.groupby_object = groupby_object
 
     def __getitem__(self, arg: PositionalIndexer | tuple) -> DataFrame | Series:
@@ -281,3 +282,22 @@ class GroupByPositionalSelector:
         self.groupby_object._reset_group_selection()
         mask = self.groupby_object._make_mask_from_positional_indexer(arg)
         return self.groupby_object._mask_selected_obj(mask)
+
+
+class GroupByNthSelector:
+    """
+    Dynamically substituted for GroupBy.nth to enable both call and index
+    """
+
+    def __init__(self, groupby_object: groupby.GroupBy) -> None:
+        self.groupby_object = groupby_object
+
+    def __call__(
+        self,
+        n: PositionalIndexer | tuple,
+        dropna: Literal["any", "all", None] = None,
+    ) -> DataFrame | Series:
+        return self.groupby_object.nth_actual(n, dropna)
+
+    def __getitem__(self, n: PositionalIndexer | tuple) -> DataFrame | Series:
+        return self.groupby_object.nth_actual(n)

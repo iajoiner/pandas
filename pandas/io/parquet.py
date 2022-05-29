@@ -21,7 +21,7 @@ from pandas import (
     MultiIndex,
     get_option,
 )
-from pandas.core import generic
+from pandas.core.shared_docs import _shared_docs
 from pandas.util.version import Version
 
 from pandas.io.common import (
@@ -109,7 +109,7 @@ def _get_path_or_handle(
 
 class BaseImpl:
     @staticmethod
-    def validate_dataframe(df: DataFrame):
+    def validate_dataframe(df: DataFrame) -> None:
 
         if not isinstance(df, DataFrame):
             raise ValueError("to_parquet only supports IO with DataFrames")
@@ -139,19 +139,19 @@ class BaseImpl:
     def write(self, df: DataFrame, path, compression, **kwargs):
         raise AbstractMethodError(self)
 
-    def read(self, path, columns=None, **kwargs):
+    def read(self, path, columns=None, **kwargs) -> DataFrame:
         raise AbstractMethodError(self)
 
 
 class PyArrowImpl(BaseImpl):
-    def __init__(self):
+    def __init__(self) -> None:
         import_optional_dependency(
             "pyarrow", extra="pyarrow is required for parquet support."
         )
         import pyarrow.parquet
 
         # import utils to register the pyarrow extension types
-        import pandas.core.arrays._arrow_utils  # noqa
+        import pandas.core.arrays.arrow._arrow_utils  # noqa:F401
 
         self.api = pyarrow
 
@@ -164,7 +164,7 @@ class PyArrowImpl(BaseImpl):
         storage_options: StorageOptions = None,
         partition_cols: list[str] | None = None,
         **kwargs,
-    ):
+    ) -> None:
         self.validate_dataframe(df)
 
         from_pandas_kwargs: dict[str, Any] = {"schema": kwargs.pop("schema", None)}
@@ -180,6 +180,13 @@ class PyArrowImpl(BaseImpl):
             mode="wb",
             is_dir=partition_cols is not None,
         )
+        if (
+            isinstance(path_or_handle, io.BufferedWriter)
+            and hasattr(path_or_handle, "name")
+            and isinstance(path_or_handle.name, (str, bytes))
+        ):
+            path_or_handle = path_or_handle.name
+
         try:
             if partition_cols is not None:
                 # writes to multiple files under the given path
@@ -206,7 +213,7 @@ class PyArrowImpl(BaseImpl):
         use_nullable_dtypes=False,
         storage_options: StorageOptions = None,
         **kwargs,
-    ):
+    ) -> DataFrame:
         kwargs["use_pandas_metadata"] = True
 
         to_pandas_kwargs = {}
@@ -249,7 +256,7 @@ class PyArrowImpl(BaseImpl):
 
 
 class FastParquetImpl(BaseImpl):
-    def __init__(self):
+    def __init__(self) -> None:
         # since pandas is a dependency of fastparquet
         # we need to import on first use
         fastparquet = import_optional_dependency(
@@ -266,7 +273,7 @@ class FastParquetImpl(BaseImpl):
         partition_cols=None,
         storage_options: StorageOptions = None,
         **kwargs,
-    ):
+    ) -> None:
         self.validate_dataframe(df)
         # thriftpy/protocol/compact.py:339:
         # DeprecationWarning: tostring() is deprecated.
@@ -309,7 +316,7 @@ class FastParquetImpl(BaseImpl):
 
     def read(
         self, path, columns=None, storage_options: StorageOptions = None, **kwargs
-    ):
+    ) -> DataFrame:
         parquet_kwargs: dict[str, Any] = {}
         use_nullable_dtypes = kwargs.pop("use_nullable_dtypes", False)
         if Version(self.api.__version__) >= Version("0.7.1"):
@@ -342,16 +349,15 @@ class FastParquetImpl(BaseImpl):
             )
             path = handles.handle
 
-        parquet_file = self.api.ParquetFile(path, **parquet_kwargs)
+        try:
+            parquet_file = self.api.ParquetFile(path, **parquet_kwargs)
+            return parquet_file.to_pandas(columns=columns, **kwargs)
+        finally:
+            if handles is not None:
+                handles.close()
 
-        result = parquet_file.to_pandas(columns=columns, **kwargs)
 
-        if handles is not None:
-            handles.close()
-        return result
-
-
-@doc(storage_options=generic._shared_docs["storage_options"])
+@doc(storage_options=_shared_docs["storage_options"])
 def to_parquet(
     df: DataFrame,
     path: FilePath | WriteBuffer[bytes] | None = None,
@@ -434,7 +440,7 @@ def to_parquet(
         return None
 
 
-@doc(storage_options=generic._shared_docs["storage_options"])
+@doc(storage_options=_shared_docs["storage_options"])
 def read_parquet(
     path,
     engine: str = "auto",
@@ -442,7 +448,7 @@ def read_parquet(
     storage_options: StorageOptions = None,
     use_nullable_dtypes: bool = False,
     **kwargs,
-):
+) -> DataFrame:
     """
     Load a parquet object from the file path, returning a DataFrame.
 
@@ -457,7 +463,7 @@ def read_parquet(
         A file URL can also be a path to a directory that contains multiple
         partitioned parquet files. Both pyarrow and fastparquet support
         paths to directories as well as file URLs. A directory path could be:
-        ``file://localhost/path/to/tables`` or ``s3://bucket/partition_dir``
+        ``file://localhost/path/to/tables`` or ``s3://bucket/partition_dir``.
     engine : {{'auto', 'pyarrow', 'fastparquet'}}, default 'auto'
         Parquet library to use. If 'auto', then the option
         ``io.parquet.engine`` is used. The default ``io.parquet.engine``

@@ -33,6 +33,10 @@ from pandas._typing import (
     Axis,
     NDFrameT,
 )
+from pandas.errors import (
+    DataError,
+    SpecificationError,
+)
 from pandas.util._decorators import cache_readonly
 from pandas.util._exceptions import find_stack_level
 
@@ -50,14 +54,9 @@ from pandas.core.dtypes.generic import (
 )
 
 from pandas.core.algorithms import safe_sort
-from pandas.core.base import (
-    DataError,
-    SelectionMixin,
-    SpecificationError,
-)
+from pandas.core.base import SelectionMixin
 import pandas.core.common as com
 from pandas.core.construction import (
-    array as pd_array,
     create_series_with_explicit_dtype,
     ensure_wrapped_if_datetimelike,
 )
@@ -114,7 +113,7 @@ class Apply(metaclass=abc.ABCMeta):
         result_type: str | None,
         args,
         kwargs,
-    ):
+    ) -> None:
         self.obj = obj
         self.raw = raw
         self.args = args or ()
@@ -326,6 +325,9 @@ class Apply(metaclass=abc.ABCMeta):
         obj = self.obj
         arg = cast(List[AggFuncTypeBase], self.f)
 
+        if getattr(obj, "axis", 0) == 1:
+            raise NotImplementedError("axis other than 0 is not supported")
+
         if not isinstance(obj, SelectionMixin):
             # i.e. obj is Series or DataFrame
             selected_obj = obj
@@ -456,6 +458,9 @@ class Apply(metaclass=abc.ABCMeta):
 
         obj = self.obj
         arg = cast(AggFuncTypeDict, self.f)
+
+        if getattr(obj, "axis", 0) == 1:
+            raise NotImplementedError("axis other than 0 is not supported")
 
         if not isinstance(obj, SelectionMixin):
             # i.e. obj is Series or DataFrame
@@ -596,7 +601,7 @@ class Apply(metaclass=abc.ABCMeta):
             for k, v in func.items():
                 if not is_aggregator(v):
                     # mypy can't realize v is not a list here
-                    new_func[k] = [v]  # type:ignore[list-item]
+                    new_func[k] = [v]  # type: ignore[list-item]
                 else:
                     new_func[k] = v
             func = new_func
@@ -997,7 +1002,7 @@ class FrameColumnApply(FrameApply):
                 # GH#35462 re-pin mgr in case setitem changed it
                 ser._mgr = mgr
                 mgr.set_values(arr)
-                ser.name = name
+                object.__setattr__(ser, "_name", name)
                 yield ser
 
     @property
@@ -1054,7 +1059,7 @@ class SeriesApply(NDFrameApply):
         convert_dtype: bool,
         args,
         kwargs,
-    ):
+    ) -> None:
         self.convert_dtype = convert_dtype
 
         super().__init__(
@@ -1142,9 +1147,9 @@ class SeriesApply(NDFrameApply):
                 )
 
         if len(mapped) and isinstance(mapped[0], ABCSeries):
-            # GH 25959 use pd.array instead of tolist
-            # so extension arrays can be used
-            return obj._constructor_expanddim(pd_array(mapped), index=obj.index)
+            # GH#43986 Need to do list(mapped) in order to get treated as nested
+            #  See also GH#25959 regarding EA support
+            return obj._constructor_expanddim(list(mapped), index=obj.index)
         else:
             return obj._constructor(mapped, index=obj.index).__finalize__(
                 obj, method="apply"
@@ -1158,7 +1163,7 @@ class GroupByApply(Apply):
         func: AggFuncType,
         args,
         kwargs,
-    ):
+    ) -> None:
         kwargs = kwargs.copy()
         self.axis = obj.obj._get_axis_number(kwargs.get("axis", 0))
         super().__init__(
@@ -1187,7 +1192,7 @@ class ResamplerWindowApply(Apply):
         func: AggFuncType,
         args,
         kwargs,
-    ):
+    ) -> None:
         super().__init__(
             obj,
             func,

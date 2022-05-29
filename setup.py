@@ -38,7 +38,7 @@ def is_platform_mac():
 
 
 # note: sync with pyproject.toml, environment.yml and asv.conf.json
-min_cython_ver = "0.29.24"
+min_cython_ver = "0.29.30"
 
 try:
     from Cython import (
@@ -392,8 +392,8 @@ macros.append(("NPY_NO_DEPRECATED_API", "0"))
 # ----------------------------------------------------------------------
 # Specification of Dependencies
 
-# TODO: Need to check to see if e.g. `linetrace` has changed and possibly
-# re-compile.
+# TODO(cython#4518): Need to check to see if e.g. `linetrace` has changed and
+#  possibly re-compile.
 def maybe_cythonize(extensions, *args, **kwargs):
     """
     Render tempita templates before calling cythonize. This is skipped for
@@ -504,6 +504,7 @@ ext_data = {
     "_libs.tslibs.fields": {
         "pyxfile": "_libs/tslibs/fields",
         "depends": tseries_depends,
+        "sources": ["pandas/_libs/tslibs/src/datetime/np_datetime.c"],
     },
     "_libs.tslibs.nattype": {"pyxfile": "_libs/tslibs/nattype"},
     "_libs.tslibs.np_datetime": {
@@ -517,6 +518,7 @@ ext_data = {
     "_libs.tslibs.offsets": {
         "pyxfile": "_libs/tslibs/offsets",
         "depends": tseries_depends,
+        "sources": ["pandas/_libs/tslibs/src/datetime/np_datetime.c"],
     },
     "_libs.tslibs.parsing": {
         "pyxfile": "_libs/tslibs/parsing",
@@ -536,10 +538,12 @@ ext_data = {
     "_libs.tslibs.timedeltas": {
         "pyxfile": "_libs/tslibs/timedeltas",
         "depends": tseries_depends,
+        "sources": ["pandas/_libs/tslibs/src/datetime/np_datetime.c"],
     },
     "_libs.tslibs.timestamps": {
         "pyxfile": "_libs/tslibs/timestamps",
         "depends": tseries_depends,
+        "sources": ["pandas/_libs/tslibs/src/datetime/np_datetime.c"],
     },
     "_libs.tslibs.timezones": {"pyxfile": "_libs/tslibs/timezones"},
     "_libs.tslibs.tzconversion": {

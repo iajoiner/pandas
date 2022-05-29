@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from pandas.errors import SettingWithCopyError
 import pandas.util._test_decorators as td
 
 import pandas as pd
@@ -14,7 +15,6 @@ from pandas import (
     notna,
 )
 import pandas._testing as tm
-import pandas.core.common as com
 
 
 def assert_equal(a, b):
@@ -214,11 +214,9 @@ class TestMultiIndexSetItem:
         exp = Series(arr, index=[8, 10], name="c", dtype="int64")
         result = df.loc[4, "c"]
         tm.assert_series_equal(result, exp)
-        if not using_array_manager:
-            # FIXME(ArrayManager): this correctly preserves dtype,
-            #  but incorrectly is not inplace.
-            # extra check for inplace-ness
-            tm.assert_numpy_array_equal(view, exp.values)
+
+        # extra check for inplace-ness
+        tm.assert_numpy_array_equal(view, exp.values)
 
         # arr + 0.5 cannot be cast losslessly to int, so we upcast
         df.loc[4, "c"] = arr + 0.5
@@ -387,8 +385,7 @@ class TestMultiIndexSetItem:
         obj = DataFrame(
             np.random.randn(len(index), 4), index=index, columns=["a", "b", "c", "d"]
         )
-        if frame_or_series is not DataFrame:
-            obj = obj["a"]
+        obj = tm.get_obj(obj, frame_or_series)
 
         res = obj.loc[1:2]
         exp = obj.reindex(obj.index[2:])
@@ -494,7 +491,7 @@ def test_frame_setitem_copy_raises(multiindex_dataframe_random_data):
     # will raise/warn as its chained assignment
     df = multiindex_dataframe_random_data.T
     msg = "A value is trying to be set on a copy of a slice from a DataFrame"
-    with pytest.raises(com.SettingWithCopyError, match=msg):
+    with pytest.raises(SettingWithCopyError, match=msg):
         df["foo"]["one"] = 2
 
 
@@ -503,7 +500,7 @@ def test_frame_setitem_copy_no_write(multiindex_dataframe_random_data):
     expected = frame
     df = frame.copy()
     msg = "A value is trying to be set on a copy of a slice from a DataFrame"
-    with pytest.raises(com.SettingWithCopyError, match=msg):
+    with pytest.raises(SettingWithCopyError, match=msg):
         df["foo"]["one"] = 2
 
     result = df

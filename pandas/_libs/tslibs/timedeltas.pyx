@@ -1,11 +1,11 @@
 import collections
 import warnings
 
-import cython
-
+cimport cython
 from cpython.object cimport (
     Py_EQ,
     Py_NE,
+    PyObject,
     PyObject_RichCompare,
 )
 
@@ -21,12 +21,12 @@ cnp.import_array()
 
 from cpython.datetime cimport (
     PyDateTime_Check,
-    PyDateTime_IMPORT,
     PyDelta_Check,
+    import_datetime,
     timedelta,
 )
 
-PyDateTime_IMPORT
+import_datetime()
 
 
 cimport pandas._libs.tslibs.util as util
@@ -35,6 +35,7 @@ from pandas._libs.tslibs.conversion cimport (
     cast_from_unit,
     precision_from_unit,
 )
+from pandas._libs.tslibs.dtypes cimport npy_unit_to_abbrev
 from pandas._libs.tslibs.nattype cimport (
     NPY_NAT,
     c_NaT as NaT,
@@ -43,12 +44,20 @@ from pandas._libs.tslibs.nattype cimport (
 )
 from pandas._libs.tslibs.np_datetime cimport (
     NPY_DATETIMEUNIT,
+    NPY_FR_ns,
+    cmp_dtstructs,
     cmp_scalar,
     get_datetime64_unit,
     get_timedelta64_value,
+    get_unit_from_dtype,
+    npy_datetimestruct,
+    pandas_datetime_to_datetimestruct,
+    pandas_timedelta_to_timedeltastruct,
     pandas_timedeltastruct,
-    td64_to_tdstruct,
 )
+
+from pandas._libs.tslibs.np_datetime import OutOfBoundsTimedelta
+
 from pandas._libs.tslibs.offsets cimport is_tick_object
 from pandas._libs.tslibs.util cimport (
     is_array,
@@ -80,6 +89,7 @@ Components = collections.namedtuple(
     ],
 )
 
+# This should be kept consistent with UnitChoices in pandas/_libs/tslibs/timedeltas.pyi
 cdef dict timedelta_abbrevs = {
     "Y": "Y",
     "y": "Y",
@@ -132,14 +142,14 @@ _no_input = object()
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def ints_to_pytimedelta(const int64_t[:] arr, box=False):
+def ints_to_pytimedelta(ndarray m8values, box=False):
     """
     convert an i8 repr to an ndarray of timedelta or Timedelta (if box ==
     True)
 
     Parameters
     ----------
-    arr : ndarray[int64_t]
+    arr : ndarray[timedelta64]
     box : bool, default False
 
     Returns
@@ -148,9 +158,12 @@ def ints_to_pytimedelta(const int64_t[:] arr, box=False):
         array of Timedelta or timedeltas objects
     """
     cdef:
-        Py_ssize_t i, n = len(arr)
+        Py_ssize_t i, n = m8values.size
         int64_t value
-        object[:] result = np.empty(n, dtype=object)
+        object[::1] result = np.empty(n, dtype=object)
+        NPY_DATETIMEUNIT reso = get_unit_from_dtype(m8values.dtype)
+
+    arr = m8values.view("i8")
 
     for i in range(n):
 
@@ -159,9 +172,26 @@ def ints_to_pytimedelta(const int64_t[:] arr, box=False):
             result[i] = <object>NaT
         else:
             if box:
-                result[i] = Timedelta(value)
-            else:
+                result[i] = _timedelta_from_value_and_reso(value, reso=reso)
+            elif reso == NPY_DATETIMEUNIT.NPY_FR_ns:
                 result[i] = timedelta(microseconds=int(value) / 1000)
+            elif reso == NPY_DATETIMEUNIT.NPY_FR_us:
+                result[i] = timedelta(microseconds=value)
+            elif reso == NPY_DATETIMEUNIT.NPY_FR_ms:
+                result[i] = timedelta(milliseconds=value)
+            elif reso == NPY_DATETIMEUNIT.NPY_FR_s:
+                result[i] = timedelta(seconds=value)
+            elif reso == NPY_DATETIMEUNIT.NPY_FR_m:
+                result[i] = timedelta(minutes=value)
+            elif reso == NPY_DATETIMEUNIT.NPY_FR_h:
+                result[i] = timedelta(hours=value)
+            elif reso == NPY_DATETIMEUNIT.NPY_FR_D:
+                result[i] = timedelta(days=value)
+            elif reso == NPY_DATETIMEUNIT.NPY_FR_W:
+                result[i] = timedelta(weeks=value)
+            else:
+                # Month, Year, NPY_FR_GENERIC, pico, fempto, atto
+                raise NotImplementedError(reso)
 
     return result.base  # .base to access underlying np.ndarray
 
@@ -172,49 +202,24 @@ cpdef int64_t delta_to_nanoseconds(delta) except? -1:
     if is_tick_object(delta):
         return delta.nanos
     if isinstance(delta, _Timedelta):
-        delta = delta.value
+        if delta._reso == NPY_FR_ns:
+            return delta.value
+        raise NotImplementedError(delta._reso)
+
     if is_timedelta64_object(delta):
         return get_timedelta64_value(ensure_td64ns(delta))
-    if is_integer_object(delta):
-        return delta
+
     if PyDelta_Check(delta):
         try:
             return (
-                delta.days * 24 * 60 * 60 * 1_000_000
+                delta.days * 24 * 3600 * 1_000_000
                 + delta.seconds * 1_000_000
                 + delta.microseconds
             ) * 1000
         except OverflowError as err:
-            from pandas._libs.tslibs.conversion import OutOfBoundsTimedelta
             raise OutOfBoundsTimedelta(*err.args) from err
 
     raise TypeError(type(delta))
-
-
-cdef str npy_unit_to_abbrev(NPY_DATETIMEUNIT unit):
-    if unit == NPY_DATETIMEUNIT.NPY_FR_ns or unit == NPY_DATETIMEUNIT.NPY_FR_GENERIC:
-        # generic -> default to nanoseconds
-        return "ns"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_us:
-        return "us"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_ms:
-        return "ms"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_s:
-        return "s"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_m:
-        return "m"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_h:
-        return "h"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_D:
-        return "D"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_W:
-        return "W"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_M:
-        return "M"
-    elif unit == NPY_DATETIMEUNIT.NPY_FR_Y:
-        return "Y"
-    else:
-        raise NotImplementedError(unit)
 
 
 @cython.overflowcheck(True)
@@ -249,7 +254,6 @@ cdef object ensure_td64ns(object ts):
             # NB: cython#1381 this cannot be *=
             td64_value = td64_value * mult
         except OverflowError as err:
-            from pandas._libs.tslibs.conversion import OutOfBoundsTimedelta
             raise OutOfBoundsTimedelta(ts) from err
 
         return np.timedelta64(td64_value, "ns")
@@ -275,6 +279,8 @@ cdef convert_to_timedelta64(object ts, str unit):
         return np.timedelta64(NPY_NAT, "ns")
     elif isinstance(ts, _Timedelta):
         # already in the proper format
+        if ts._reso != NPY_FR_ns:
+            raise NotImplementedError
         ts = np.timedelta64(ts.value, "ns")
     elif is_timedelta64_object(ts):
         ts = ensure_td64ns(ts)
@@ -312,8 +318,9 @@ cdef convert_to_timedelta64(object ts, str unit):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def array_to_timedelta64(
-    ndarray[object] values, str unit=None, str errors="raise"
+    ndarray values, str unit=None, str errors="raise"
 ) -> ndarray:
+    # values is object-dtype, may be 2D
     """
     Convert an ndarray to an array of timedeltas. If errors == 'coerce',
     coerce non-convertible objects to NaT. Otherwise, raise.
@@ -324,50 +331,89 @@ def array_to_timedelta64(
     """
 
     cdef:
-        Py_ssize_t i, n
-        int64_t[:] iresult
+        Py_ssize_t i, n = values.size
+        ndarray result = np.empty((<object>values).shape, dtype="m8[ns]")
+        object item
+        int64_t ival
+        cnp.broadcast mi = cnp.PyArray_MultiIterNew2(result, values)
+        cnp.flatiter it
+
+    if values.descr.type_num != cnp.NPY_OBJECT:
+        # raise here otherwise we segfault below
+        raise TypeError("array_to_timedelta64 'values' must have object dtype")
 
     if errors not in {'ignore', 'raise', 'coerce'}:
         raise ValueError("errors must be one of {'ignore', 'raise', or 'coerce'}")
 
-    n = values.shape[0]
-    result = np.empty(n, dtype='m8[ns]')
-    iresult = result.view('i8')
-
-    if unit is not None:
+    if unit is not None and errors != "coerce":
+        it = cnp.PyArray_IterNew(values)
         for i in range(n):
-            if isinstance(values[i], str) and errors != "coerce":
+            # Analogous to: item = values[i]
+            item = cnp.PyArray_GETITEM(values, cnp.PyArray_ITER_DATA(it))
+            if isinstance(item, str):
                 raise ValueError(
                     "unit must not be specified if the input contains a str"
                 )
+            cnp.PyArray_ITER_NEXT(it)
 
     # Usually, we have all strings. If so, we hit the fast path.
     # If this path fails, we try conversion a different way, and
     # this is where all of the error handling will take place.
     try:
         for i in range(n):
-            if values[i] is NaT:
-                # we allow this check in the fast-path because NaT is a C-object
-                #  so this is an inexpensive check
-                iresult[i] = NPY_NAT
-            else:
-                result[i] = parse_timedelta_string(values[i])
+            # Analogous to: item = values[i]
+            item = <object>(<PyObject**>cnp.PyArray_MultiIter_DATA(mi, 1))[0]
+
+            ival = _item_to_timedelta64_fastpath(item)
+
+            # Analogous to: iresult[i] = ival
+            (<int64_t*>cnp.PyArray_MultiIter_DATA(mi, 0))[0] = ival
+
+            cnp.PyArray_MultiIter_NEXT(mi)
+
     except (TypeError, ValueError):
+        cnp.PyArray_MultiIter_RESET(mi)
+
         parsed_unit = parse_timedelta_unit(unit or 'ns')
         for i in range(n):
-            try:
-                result[i] = convert_to_timedelta64(values[i], parsed_unit)
-            except ValueError as err:
-                if errors == 'coerce':
-                    result[i] = NPY_NAT
-                elif "unit abbreviation w/o a number" in str(err):
-                    # re-raise with more pertinent message
-                    msg = f"Could not convert '{values[i]}' to NumPy timedelta"
-                    raise ValueError(msg) from err
-                else:
-                    raise
+            item = <object>(<PyObject**>cnp.PyArray_MultiIter_DATA(mi, 1))[0]
 
-    return iresult.base  # .base to access underlying np.ndarray
+            ival = _item_to_timedelta64(item, parsed_unit, errors)
+
+            (<int64_t*>cnp.PyArray_MultiIter_DATA(mi, 0))[0] = ival
+
+            cnp.PyArray_MultiIter_NEXT(mi)
+
+    return result
+
+
+cdef inline int64_t _item_to_timedelta64_fastpath(object item) except? -1:
+    """
+    See array_to_timedelta64.
+    """
+    if item is NaT:
+        # we allow this check in the fast-path because NaT is a C-object
+        #  so this is an inexpensive check
+        return NPY_NAT
+    else:
+        return parse_timedelta_string(item)
+
+
+cdef inline int64_t _item_to_timedelta64(object item, str parsed_unit, str errors) except? -1:
+    """
+    See array_to_timedelta64.
+    """
+    try:
+        return get_timedelta64_value(convert_to_timedelta64(item, parsed_unit))
+    except ValueError as err:
+        if errors == "coerce":
+            return NPY_NAT
+        elif "unit abbreviation w/o a number" in str(err):
+            # re-raise with more pertinent message
+            msg = f"Could not convert '{item}' to NumPy timedelta"
+            raise ValueError(msg) from err
+        else:
+            raise
 
 
 cdef inline int64_t parse_timedelta_string(str ts) except? -1:
@@ -628,7 +674,8 @@ cdef bint _validate_ops_compat(other):
 
 def _op_unary_method(func, name):
     def f(self):
-        return Timedelta(func(self.value), unit='ns')
+        new_value = func(self.value)
+        return _timedelta_from_value_and_reso(new_value, self._reso)
     f.__name__ = name
     return f
 
@@ -673,7 +720,17 @@ def _binary_op_method_timedeltalike(op, name):
         if other is NaT:
             # e.g. if original other was timedelta64('NaT')
             return NaT
-        return Timedelta(op(self.value, other.value), unit='ns')
+
+        if self._reso != other._reso:
+            raise NotImplementedError
+
+        res = op(self.value, other.value)
+        if res == NPY_NAT:
+            # e.g. test_implementation_limits
+            # TODO: more generally could do an overflowcheck in op?
+            return NaT
+
+        return _timedelta_from_value_and_reso(res, reso=self._reso)
 
     f.__name__ = name
     return f
@@ -803,6 +860,38 @@ cdef _to_py_int_float(v):
     raise TypeError(f"Invalid type {type(v)}. Must be int or float.")
 
 
+def _timedelta_unpickle(value, reso):
+    return _timedelta_from_value_and_reso(value, reso)
+
+
+cdef _timedelta_from_value_and_reso(int64_t value, NPY_DATETIMEUNIT reso):
+    # Could make this a classmethod if/when cython supports cdef classmethods
+    cdef:
+        _Timedelta td_base
+
+    if reso == NPY_FR_ns:
+        td_base = _Timedelta.__new__(Timedelta, microseconds=int(value) // 1000)
+    elif reso == NPY_DATETIMEUNIT.NPY_FR_us:
+        td_base = _Timedelta.__new__(Timedelta, microseconds=int(value))
+    elif reso == NPY_DATETIMEUNIT.NPY_FR_ms:
+        td_base = _Timedelta.__new__(Timedelta, milliseconds=int(value))
+    elif reso == NPY_DATETIMEUNIT.NPY_FR_s:
+        td_base = _Timedelta.__new__(Timedelta, seconds=int(value))
+    elif reso == NPY_DATETIMEUNIT.NPY_FR_m:
+        td_base = _Timedelta.__new__(Timedelta, minutes=int(value))
+    elif reso == NPY_DATETIMEUNIT.NPY_FR_h:
+        td_base = _Timedelta.__new__(Timedelta, hours=int(value))
+    elif reso == NPY_DATETIMEUNIT.NPY_FR_D:
+        td_base = _Timedelta.__new__(Timedelta, days=int(value))
+    else:
+        raise NotImplementedError(reso)
+
+    td_base.value = value
+    td_base._is_populated = 0
+    td_base._reso = reso
+    return td_base
+
+
 # Similar to Timestamp/datetime, this is a construction requirement for
 # timedeltas that we need to do object instantiation in python. This will
 # serve as a C extension type that shadows the Python class, where we do any
@@ -810,15 +899,40 @@ cdef _to_py_int_float(v):
 cdef class _Timedelta(timedelta):
     # cdef readonly:
     #    int64_t value      # nanoseconds
-    #    object freq        # frequency reference
-    #    bint is_populated  # are my components populated
+    #    bint _is_populated  # are my components populated
     #    int64_t _d, _h, _m, _s, _ms, _us, _ns
+    #    NPY_DATETIMEUNIT _reso
 
     # higher than np.ndarray and np.matrix
     __array_priority__ = 100
 
+    @property
+    def freq(self) -> None:
+        # GH#46430
+        warnings.warn(
+            "Timedelta.freq is deprecated and will be removed in a future version",
+            FutureWarning,
+            stacklevel=1,
+        )
+        return None
+
+    @property
+    def is_populated(self) -> bool:
+        # GH#46430
+        warnings.warn(
+            "Timedelta.is_populated is deprecated and will be removed in a future version",
+            FutureWarning,
+            stacklevel=1,
+        )
+        return self._is_populated
+
     def __hash__(_Timedelta self):
         if self._has_ns():
+            # Note: this does *not* satisfy the invariance
+            #  td1 == td2 \\Rightarrow hash(td1) == hash(td2)
+            #  if td1 and td2 have different _resos. timedelta64 also has this
+            #  non-invariant behavior.
+            #  see GH#44504
             return hash(self.value)
         else:
             return timedelta.__hash__(self)
@@ -856,22 +970,42 @@ cdef class _Timedelta(timedelta):
         else:
             return NotImplemented
 
-        return cmp_scalar(self.value, ots.value, op)
+        if self._reso == ots._reso:
+            return cmp_scalar(self.value, ots.value, op)
+        return self._compare_mismatched_resos(ots, op)
 
-    cpdef bint _has_ns(self):
-        return self.value % 1000 != 0
+    # TODO: re-use/share with Timestamp
+    cdef inline bint _compare_mismatched_resos(self, _Timedelta other, op):
+        # Can't just dispatch to numpy as they silently overflow and get it wrong
+        cdef:
+            npy_datetimestruct dts_self
+            npy_datetimestruct dts_other
 
-    def _ensure_components(_Timedelta self):
+        # dispatch to the datetimestruct utils instead of writing new ones!
+        pandas_datetime_to_datetimestruct(self.value, self._reso, &dts_self)
+        pandas_datetime_to_datetimestruct(other.value, other._reso, &dts_other)
+        return cmp_dtstructs(&dts_self,  &dts_other, op)
+
+    cdef bint _has_ns(self):
+        if self._reso == NPY_FR_ns:
+            return self.value % 1000 != 0
+        elif self._reso < NPY_FR_ns:
+            # i.e. seconds, millisecond, microsecond
+            return False
+        else:
+            raise NotImplementedError(self._reso)
+
+    cdef _ensure_components(_Timedelta self):
         """
         compute the components
         """
-        if self.is_populated:
+        if self._is_populated:
             return
 
         cdef:
             pandas_timedeltastruct tds
 
-        td64_to_tdstruct(self.value, &tds)
+        pandas_timedelta_to_timedeltastruct(self.value, self._reso, &tds)
         self._d = tds.days
         self._h = tds.hrs
         self._m = tds.min
@@ -882,11 +1016,11 @@ cdef class _Timedelta(timedelta):
         self._seconds = tds.seconds
         self._microseconds = tds.microseconds
 
-        self.is_populated = 1
+        self._is_populated = 1
 
     cpdef timedelta to_pytimedelta(_Timedelta self):
         """
-        Convert a pandas Timedelta object into a python timedelta object.
+        Convert a pandas Timedelta object into a python ``datetime.timedelta`` object.
 
         Timedelta objects are internally saved as numpy datetime64[ns] dtype.
         Use to_pytimedelta() to convert to object dtype.
@@ -903,13 +1037,24 @@ cdef class _Timedelta(timedelta):
         -----
         Any nanosecond resolution will be lost.
         """
-        return timedelta(microseconds=int(self.value) / 1000)
+        if self._reso == NPY_FR_ns:
+            return timedelta(microseconds=int(self.value) / 1000)
+
+        # TODO(@WillAyd): is this the right way to use components?
+        self._ensure_components()
+        return timedelta(
+            days=self._d, seconds=self._seconds, microseconds=self._microseconds
+        )
 
     def to_timedelta64(self) -> np.timedelta64:
         """
         Return a numpy.timedelta64 object with 'ns' precision.
         """
-        return np.timedelta64(self.value, 'ns')
+        cdef:
+            str abbrev = npy_unit_to_abbrev(self._reso)
+        # TODO: way to create a np.timedelta64 obj with the reso directly
+        #  instead of having to get the abbrev?
+        return np.timedelta64(self.value, abbrev)
 
     def to_numpy(self, dtype=None, copy=False) -> np.timedelta64:
         """
@@ -979,6 +1124,12 @@ cdef class _Timedelta(timedelta):
         >>> td.delta
         42
         """
+        # Deprecated GH#46476
+        warnings.warn(
+            "Timedelta.delta is deprecated and will be removed in a future version.",
+            FutureWarning,
+            stacklevel=1,
+        )
         return self.value
 
     @property
@@ -1014,7 +1165,7 @@ cdef class _Timedelta(timedelta):
         >>> td.asm8
         numpy.timedelta64(42,'ns')
         """
-        return np.int64(self.value).view('m8[ns]')
+        return self.to_timedelta64()
 
     @property
     def resolution_string(self) -> str:
@@ -1120,7 +1271,10 @@ cdef class _Timedelta(timedelta):
         converted : string of a Timedelta
 
         """
-        cdef object sign, seconds_pretty, subs, fmt, comp_dict
+        cdef:
+            str sign, fmt
+            dict comp_dict
+            object subs
 
         self._ensure_components()
 
@@ -1215,6 +1369,14 @@ cdef class _Timedelta(timedelta):
                f'H{components.minutes}M{seconds}S')
         return tpl
 
+    # ----------------------------------------------------------------
+    # Constructors
+
+    @classmethod
+    def _from_value_and_reso(cls, int64_t value, NPY_DATETIMEUNIT reso):
+        # exposing as classmethod for testing
+        return _timedelta_from_value_and_reso(value, reso)
+
 
 # Python front end to C extension type _Timedelta
 # This serves as the box for timedelta64
@@ -1251,11 +1413,33 @@ class Timedelta(_Timedelta):
 
     Notes
     -----
+    The constructor may take in either both values of value and unit or
+    kwargs as above. Either one of them must be used during initialization
+
     The ``.value`` attribute is always in ns.
 
     If the precision is higher than nanoseconds, the precision of the duration is
     truncated to nanoseconds.
+
+    Examples
+    --------
+    Here we initialize Timedelta object with both value and unit
+
+    >>> td = pd.Timedelta(1, "d")
+    >>> td
+    Timedelta('1 days 00:00:00')
+
+    Here we initialize the Timedelta object with kwargs
+
+    >>> td2 = pd.Timedelta(days=1)
+    >>> td2
+    Timedelta('1 days 00:00:00')
+
+    We see that either way we get the same result
     """
+
+    _req_any_kwargs_new = {"weeks", "days", "hours", "minutes", "seconds",
+                           "milliseconds", "microseconds", "nanoseconds"}
 
     def __new__(cls, object value=_no_input, unit=None, **kwargs):
         cdef _Timedelta td_base
@@ -1268,17 +1452,36 @@ class Timedelta(_Timedelta):
 
             kwargs = {key: _to_py_int_float(kwargs[key]) for key in kwargs}
 
-            nano = convert_to_timedelta64(kwargs.pop('nanoseconds', 0), 'ns')
-            try:
-                value = nano + convert_to_timedelta64(timedelta(**kwargs),
-                                                      'ns')
-            except TypeError as e:
+            unsupported_kwargs = set(kwargs)
+            unsupported_kwargs.difference_update(cls._req_any_kwargs_new)
+            if unsupported_kwargs or not cls._req_any_kwargs_new.intersection(kwargs):
                 raise ValueError(
                     "cannot construct a Timedelta from the passed arguments, "
                     "allowed keywords are "
                     "[weeks, days, hours, minutes, seconds, "
                     "milliseconds, microseconds, nanoseconds]"
                 )
+
+            # GH43764, convert any input to nanoseconds first and then
+            # create the timestamp. This ensures that any potential
+            # nanosecond contributions from kwargs parsed as floats
+            # are taken into consideration.
+            seconds = int((
+                (
+                    (kwargs.get('days', 0) + kwargs.get('weeks', 0) * 7) * 24
+                    + kwargs.get('hours', 0)
+                ) * 3600
+                + kwargs.get('minutes', 0) * 60
+                + kwargs.get('seconds', 0)
+                ) * 1_000_000_000
+            )
+
+            value = np.timedelta64(
+                int(kwargs.get('nanoseconds', 0))
+                + int(kwargs.get('microseconds', 0) * 1_000)
+                + int(kwargs.get('milliseconds', 0) * 1_000_000)
+                + seconds
+            )
 
         if unit in {'Y', 'y', 'M'}:
             raise ValueError(
@@ -1305,8 +1508,6 @@ class Timedelta(_Timedelta):
         elif PyDelta_Check(value):
             value = convert_to_timedelta64(value, 'ns')
         elif is_timedelta64_object(value):
-            if unit is not None:
-                value = value.astype(f'timedelta64[{unit}]')
             value = ensure_td64ns(value)
         elif is_tick_object(value):
             value = np.timedelta64(value.nanos, 'ns')
@@ -1329,25 +1530,30 @@ class Timedelta(_Timedelta):
         if value == NPY_NAT:
             return NaT
 
-        # make timedelta happy
-        td_base = _Timedelta.__new__(cls, microseconds=int(value) // 1000)
-        td_base.value = value
-        td_base.is_populated = 0
-        return td_base
+        return _timedelta_from_value_and_reso(value, NPY_FR_ns)
 
     def __setstate__(self, state):
-        (value) = state
+        if len(state) == 1:
+            # older pickle, only supported nanosecond
+            value = state[0]
+            reso = NPY_FR_ns
+        else:
+            value, reso = state
         self.value = value
+        self._reso = reso
 
     def __reduce__(self):
-        object_state = self.value,
-        return (Timedelta, object_state)
+        object_state = self.value, self._reso
+        return (_timedelta_unpickle, object_state)
 
     @cython.cdivision(True)
     def _round(self, freq, mode):
         cdef:
             int64_t result, unit, remainder
             ndarray[int64_t] arr
+
+        if self._reso != NPY_FR_ns:
+            raise NotImplementedError
 
         from pandas._libs.tslibs.offsets import to_offset
         unit = to_offset(freq).nanos
@@ -1401,7 +1607,6 @@ class Timedelta(_Timedelta):
     # Arithmetic Methods
     # TODO: Can some of these be defined in the cython class?
 
-    __inv__ = _op_unary_method(lambda x: -x, '__inv__')
     __neg__ = _op_unary_method(lambda x: -x, '__neg__')
     __pos__ = _op_unary_method(lambda x: x, '__pos__')
     __abs__ = _op_unary_method(lambda x: abs(x), '__abs__')
@@ -1413,7 +1618,14 @@ class Timedelta(_Timedelta):
 
     def __mul__(self, other):
         if is_integer_object(other) or is_float_object(other):
-            return Timedelta(other * self.value, unit='ns')
+            if util.is_nan(other):
+                # np.nan * timedelta -> np.timedelta64("NaT"), in this case NaT
+                return NaT
+
+            return _timedelta_from_value_and_reso(
+                <int64_t>(other * self.value),
+                reso=self._reso,
+            )
 
         elif is_array(other):
             # ndarray-like
@@ -1433,6 +1645,8 @@ class Timedelta(_Timedelta):
 
         elif is_integer_object(other) or is_float_object(other):
             # integers or floats
+            if self._reso != NPY_FR_ns:
+                raise NotImplementedError
             return Timedelta(self.value / other, unit='ns')
 
         elif is_array(other):
@@ -1446,6 +1660,8 @@ class Timedelta(_Timedelta):
             other = Timedelta(other)
             if other is NaT:
                 return np.nan
+            if self._reso != NPY_FR_ns:
+                raise NotImplementedError
             return float(other.value) / self.value
 
         elif is_array(other):
@@ -1464,17 +1680,25 @@ class Timedelta(_Timedelta):
             other = Timedelta(other)
             if other is NaT:
                 return np.nan
+            if self._reso != NPY_FR_ns:
+                raise NotImplementedError
             return self.value // other.value
 
         elif is_integer_object(other) or is_float_object(other):
+            if self._reso != NPY_FR_ns:
+                raise NotImplementedError
             return Timedelta(self.value // other, unit='ns')
 
         elif is_array(other):
             if other.dtype.kind == 'm':
                 # also timedelta-like
+                if self._reso != NPY_FR_ns:
+                    raise NotImplementedError
                 return _broadcast_floordiv_td64(self.value, other, _floordiv)
             elif other.dtype.kind in ['i', 'u', 'f']:
                 if other.ndim == 0:
+                    if self._reso != NPY_FR_ns:
+                        raise NotImplementedError
                     return Timedelta(self.value // other)
                 else:
                     return self.to_timedelta64() // other
@@ -1491,11 +1715,15 @@ class Timedelta(_Timedelta):
             other = Timedelta(other)
             if other is NaT:
                 return np.nan
+            if self._reso != NPY_FR_ns:
+                raise NotImplementedError
             return other.value // self.value
 
         elif is_array(other):
             if other.dtype.kind == 'm':
                 # also timedelta-like
+                if self._reso != NPY_FR_ns:
+                    raise NotImplementedError
                 return _broadcast_floordiv_td64(self.value, other, _rfloordiv)
 
             # Includes integer array // Timedelta, disallowed in GH#19761

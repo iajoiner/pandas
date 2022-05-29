@@ -9,7 +9,7 @@ import re
 import numpy as np
 import pytest
 
-from pandas.errors import PerformanceWarning
+from pandas.errors import SpecificationError
 
 from pandas.core.dtypes.common import is_integer_dtype
 
@@ -23,7 +23,6 @@ from pandas import (
     to_datetime,
 )
 import pandas._testing as tm
-from pandas.core.base import SpecificationError
 from pandas.core.groupby.grouper import Grouping
 
 
@@ -57,8 +56,6 @@ def test_agg_must_agg(df):
 
 
 def test_agg_ser_multi_key(df):
-    # TODO(wesm): unused
-    ser = df.C  # noqa
 
     f = lambda x: x.sum()
     results = df.C.groupby([df.A, df.B]).aggregate(f)
@@ -137,7 +134,7 @@ def test_groupby_aggregation_multi_level_column():
 
 def test_agg_apply_corner(ts, tsframe):
     # nothing to group, all NA
-    grouped = ts.groupby(ts * np.nan)
+    grouped = ts.groupby(ts * np.nan, group_keys=False)
     assert ts.dtype == np.float64
 
     # groupby float64 values results in Float64Index
@@ -147,7 +144,7 @@ def test_agg_apply_corner(ts, tsframe):
     tm.assert_series_equal(grouped.apply(np.sum), exp, check_index_type=False)
 
     # DataFrame
-    grouped = tsframe.groupby(tsframe["A"] * np.nan)
+    grouped = tsframe.groupby(tsframe["A"] * np.nan, group_keys=False)
     exp_df = DataFrame(
         columns=tsframe.columns,
         dtype=float,
@@ -229,10 +226,10 @@ def test_agg_str_with_kwarg_axis_1_raises(df, reduction_func):
     "func, expected, dtype, result_dtype_dict",
     [
         ("sum", [5, 7, 9], "int64", {}),
-        ("std", [4.5 ** 0.5] * 3, int, {"i": float, "j": float, "k": float}),
+        ("std", [4.5**0.5] * 3, int, {"i": float, "j": float, "k": float}),
         ("var", [4.5] * 3, int, {"i": float, "j": float, "k": float}),
         ("sum", [5, 7, 9], "Int64", {"j": "int64"}),
-        ("std", [4.5 ** 0.5] * 3, "Int64", {"i": float, "j": float, "k": float}),
+        ("std", [4.5**0.5] * 3, "Int64", {"i": float, "j": float, "k": float}),
         ("var", [4.5] * 3, "Int64", {"i": "float64", "j": "float64", "k": "float64"}),
     ],
 )
@@ -242,7 +239,10 @@ def test_multiindex_groupby_mixed_cols_axis1(func, expected, dtype, result_dtype
         [[1, 2, 3, 4, 5, 6]] * 3,
         columns=MultiIndex.from_product([["a", "b"], ["i", "j", "k"]]),
     ).astype({("a", "j"): dtype, ("b", "j"): dtype})
-    result = df.groupby(level=1, axis=1).agg(func)
+    warn = FutureWarning if func == "std" else None
+    msg = "The default value of numeric_only"
+    with tm.assert_produces_warning(warn, match=msg):
+        result = df.groupby(level=1, axis=1).agg(func)
     expected = DataFrame([expected] * 3, columns=["i", "j", "k"]).astype(
         result_dtype_dict
     )
@@ -254,7 +254,7 @@ def test_multiindex_groupby_mixed_cols_axis1(func, expected, dtype, result_dtype
     [
         ("sum", [[2, 4], [10, 12], [18, 20]], {10: "int64", 20: "int64"}),
         # std should ideally return Int64 / Float64 #43330
-        ("std", [[2 ** 0.5] * 2] * 3, "float64"),
+        ("std", [[2**0.5] * 2] * 3, "float64"),
         ("var", [[2] * 2] * 3, {10: "float64", 20: "float64"}),
     ],
 )
@@ -266,7 +266,10 @@ def test_groupby_mixed_cols_axis1(func, expected_data, result_dtype_dict):
         columns=Index([10, 20, 10, 20], name="x"),
         dtype="int64",
     ).astype({10: "Int64"})
-    result = df.groupby("x", axis=1).agg(func)
+    warn = FutureWarning if func == "std" else None
+    msg = "The default value of numeric_only"
+    with tm.assert_produces_warning(warn, match=msg):
+        result = df.groupby("x", axis=1).agg(func)
     expected = DataFrame(
         data=expected_data,
         index=Index([0, 1, 0], name="y"),
@@ -375,9 +378,7 @@ def test_agg_multiple_functions_same_name_with_ohlc_present():
     expected = DataFrame(
         expected_values, columns=expected_columns, index=expected_index
     )
-    # PerformanceWarning is thrown by `assert col in right` in assert_frame_equal
-    with tm.assert_produces_warning(PerformanceWarning):
-        tm.assert_frame_equal(result, expected)
+    tm.assert_frame_equal(result, expected)
 
 
 def test_multiple_functions_tuples_and_non_tuples(df):
@@ -920,7 +921,7 @@ def test_groupby_aggregate_empty_key_empty_return():
 def test_groupby_aggregate_empty_with_multiindex_frame():
     # GH 39178
     df = DataFrame(columns=["a", "b", "c"])
-    result = df.groupby(["a", "b"]).agg(d=("c", list))
+    result = df.groupby(["a", "b"], group_keys=False).agg(d=("c", list))
     expected = DataFrame(
         columns=["d"], index=MultiIndex([[], []], [[], []], names=["a", "b"])
     )
@@ -1103,7 +1104,7 @@ class TestLambdaMangling:
         # check pd.NameAgg case
         result1 = df.groupby(by="kind").agg(
             height_sqr_min=pd.NamedAgg(
-                column="height", aggfunc=lambda x: np.min(x ** 2)
+                column="height", aggfunc=lambda x: np.min(x**2)
             ),
             height_max=pd.NamedAgg(column="height", aggfunc="max"),
             weight_max=pd.NamedAgg(column="weight", aggfunc="max"),
@@ -1112,7 +1113,7 @@ class TestLambdaMangling:
 
         # check agg(key=(col, aggfunc)) case
         result2 = df.groupby(by="kind").agg(
-            height_sqr_min=("height", lambda x: np.min(x ** 2)),
+            height_sqr_min=("height", lambda x: np.min(x**2)),
             height_max=("height", "max"),
             weight_max=("weight", "max"),
         )
@@ -1149,7 +1150,7 @@ class TestLambdaMangling:
 
         # check agg(key=(col, aggfunc)) case
         result1 = df.groupby(by="kind").agg(
-            height_sqr_min=("height", lambda x: np.min(x ** 2)),
+            height_sqr_min=("height", lambda x: np.min(x**2)),
             height_max=("height", "max"),
             weight_max=("weight", "max"),
             height_max_2=("height", lambda x: np.max(x)),
@@ -1160,7 +1161,7 @@ class TestLambdaMangling:
         # check pd.NamedAgg case
         result2 = df.groupby(by="kind").agg(
             height_sqr_min=pd.NamedAgg(
-                column="height", aggfunc=lambda x: np.min(x ** 2)
+                column="height", aggfunc=lambda x: np.min(x**2)
             ),
             height_max=pd.NamedAgg(column="height", aggfunc="max"),
             weight_max=pd.NamedAgg(column="weight", aggfunc="max"),
@@ -1331,11 +1332,13 @@ def test_groupby_aggregate_directory(reduction_func):
     # GH#32793
     if reduction_func in ["corrwith", "nth"]:
         return None
+    warn = FutureWarning if reduction_func == "mad" else None
 
     obj = DataFrame([[0, 1], [0, np.nan]])
 
-    result_reduced_series = obj.groupby(0).agg(reduction_func)
-    result_reduced_frame = obj.groupby(0).agg({1: reduction_func})
+    with tm.assert_produces_warning(warn, match="The 'mad' method is deprecated"):
+        result_reduced_series = obj.groupby(0).agg(reduction_func)
+        result_reduced_frame = obj.groupby(0).agg({1: reduction_func})
 
     if reduction_func in ["size", "ngroup"]:
         # names are different: None / 1
@@ -1399,3 +1402,14 @@ def test_groupby_complex_raises(func):
     msg = "No matching signature found"
     with pytest.raises(TypeError, match=msg):
         data.groupby(data.index % 2).agg(func)
+
+
+@pytest.mark.parametrize(
+    "func", [["min"], ["mean", "max"], {"b": "sum"}, {"b": "prod", "c": "median"}]
+)
+def test_multi_axis_1_raises(func):
+    # GH#46995
+    df = DataFrame({"a": [1, 1, 2], "b": [3, 4, 5], "c": [6, 7, 8]})
+    gb = df.groupby("a", axis=1)
+    with pytest.raises(NotImplementedError, match="axis other than 0 is not supported"):
+        gb.agg(func)

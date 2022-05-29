@@ -1,5 +1,7 @@
 # Copyright (c) 2012, Lambda Foundry, Inc.
 # See LICENSE for the license
+from base64 import decode
+from collections import defaultdict
 from csv import (
     QUOTE_MINIMAL,
     QUOTE_NONE,
@@ -10,16 +12,7 @@ import sys
 import time
 import warnings
 
-from libc.stdlib cimport free
-from libc.string cimport (
-    strcasecmp,
-    strlen,
-    strncpy,
-)
-
-import cython
-from cython import Py_ssize_t
-
+cimport cython
 from cpython.bytes cimport (
     PyBytes_AsString,
     PyBytes_FromString,
@@ -37,6 +30,13 @@ from cpython.unicode cimport (
     PyUnicode_AsUTF8String,
     PyUnicode_Decode,
     PyUnicode_DecodeUTF8,
+)
+from cython cimport Py_ssize_t
+from libc.stdlib cimport free
+from libc.string cimport (
+    strcasecmp,
+    strlen,
+    strncpy,
 )
 
 
@@ -375,6 +375,8 @@ cdef class TextReader:
         # set encoding for native Python and C library
         if isinstance(encoding_errors, str):
             encoding_errors = encoding_errors.encode("utf-8")
+        elif encoding_errors is None:
+            encoding_errors = b"strict"
         Py_INCREF(encoding_errors)
         self.encoding_errors = PyBytes_AsString(encoding_errors)
 
@@ -558,18 +560,11 @@ cdef class TextReader:
         pass
 
     def __dealloc__(self):
-        self.close()
+        _close(self)
         parser_del(self.parser)
 
-    def close(self) -> None:
-        # also preemptively free all allocated memory
-        parser_free(self.parser)
-        if self.true_set:
-            kh_destroy_str_starts(self.true_set)
-            self.true_set = NULL
-        if self.false_set:
-            kh_destroy_str_starts(self.false_set)
-            self.false_set = NULL
+    def close(self):
+        _close(self)
 
     def _set_quoting(self, quote_char: str | bytes | None, quoting: int):
         if not isinstance(quoting, int):
@@ -657,8 +652,8 @@ cdef class TextReader:
                     field_count = self.parser.line_fields[hr]
                     start = self.parser.line_start[hr]
 
-                counts = {}
                 unnamed_count = 0
+                unnamed_col_indices = []
 
                 for i in range(field_count):
                     word = self.parser.words[start + i]
@@ -666,37 +661,49 @@ cdef class TextReader:
                     name = PyUnicode_DecodeUTF8(word, strlen(word),
                                                 self.encoding_errors)
 
-                    # We use this later when collecting placeholder names.
-                    old_name = name
-
                     if name == '':
                         if self.has_mi_columns:
                             name = f'Unnamed: {i}_level_{level}'
                         else:
                             name = f'Unnamed: {i}'
+
                         unnamed_count += 1
+                        unnamed_col_indices.append(i)
 
-                    count = counts.get(name, 0)
+                    this_header.append(name)
 
-                    if not self.has_mi_columns and self.mangle_dupe_cols:
-                        if count > 0:
-                            while count > 0:
-                                counts[name] = count + 1
-                                name = f'{name}.{count}'
-                                count = counts.get(name, 0)
+                if not self.has_mi_columns and self.mangle_dupe_cols:
+                    # Ensure that regular columns are used before unnamed ones
+                    # to keep given names and mangle unnamed columns
+                    col_loop_order = [i for i in range(len(this_header))
+                                      if i not in unnamed_col_indices
+                                      ] + unnamed_col_indices
+                    counts = {}
+
+                    for i in col_loop_order:
+                        col = this_header[i]
+                        old_col = col
+                        cur_count = counts.get(col, 0)
+
+                        if cur_count > 0:
+                            while cur_count > 0:
+                                counts[old_col] = cur_count + 1
+                                col = f'{old_col}.{cur_count}'
+                                if col in this_header:
+                                    cur_count += 1
+                                else:
+                                    cur_count = counts.get(col, 0)
+
                             if (
                                 self.dtype is not None
                                 and is_dict_like(self.dtype)
-                                and self.dtype.get(old_name) is not None
-                                and self.dtype.get(name) is None
+                                and self.dtype.get(old_col) is not None
+                                and self.dtype.get(col) is None
                             ):
-                                self.dtype.update({name: self.dtype.get(old_name)})
+                                self.dtype.update({col: self.dtype.get(old_col)})
 
-                    if old_name == '':
-                        unnamed_cols.add(name)
-
-                    this_header.append(name)
-                    counts[name] = count + 1
+                        this_header[i] = col
+                        counts[col] = cur_count + 1
 
                 if self.has_mi_columns:
 
@@ -716,15 +723,12 @@ cdef class TextReader:
 
                 data_line = hr + 1
                 header.append(this_header)
+                unnamed_cols.update({this_header[i] for i in unnamed_col_indices})
 
             if self.names is not None:
                 header = [self.names]
 
         elif self.names is not None:
-            # Enforce this unless usecols
-            if not self.has_usecols:
-                self.parser.expected_fields = len(self.names)
-
             # Names passed
             if self.parser.lines < 1:
                 self._tokenize_rows(1)
@@ -735,6 +739,10 @@ cdef class TextReader:
                 field_count = len(header[0])
             else:
                 field_count = self.parser.line_fields[data_line]
+
+            # Enforce this unless usecols
+            if not self.has_usecols:
+                self.parser.expected_fields = max(field_count, len(self.names))
         else:
             # No header passed nor to be found in the file
             if self.parser.lines < 1:
@@ -831,7 +839,9 @@ cdef class TextReader:
             status = tokenize_nrows(self.parser, nrows, self.encoding_errors)
 
         if self.parser.warn_msg != NULL:
-            print(self.parser.warn_msg, file=sys.stderr)
+            print(PyUnicode_DecodeUTF8(
+                self.parser.warn_msg, strlen(self.parser.warn_msg),
+                self.encoding_errors), file=sys.stderr)
             free(self.parser.warn_msg)
             self.parser.warn_msg = NULL
 
@@ -860,7 +870,9 @@ cdef class TextReader:
                 status = tokenize_all_rows(self.parser, self.encoding_errors)
 
             if self.parser.warn_msg != NULL:
-                print(self.parser.warn_msg, file=sys.stderr)
+                print(PyUnicode_DecodeUTF8(
+                    self.parser.warn_msg, strlen(self.parser.warn_msg),
+                    self.encoding_errors), file=sys.stderr)
                 free(self.parser.warn_msg)
                 self.parser.warn_msg = NULL
 
@@ -926,12 +938,19 @@ cdef class TextReader:
                 self.parser.line_fields[i] + \
                 (num_cols >= self.parser.line_fields[i]) * num_cols
 
-        if self.table_width - self.leading_cols > num_cols:
-            raise ParserError(f"Too many columns specified: expected "
-                              f"{self.table_width - self.leading_cols} "
-                              f"and found {num_cols}")
+        usecols_not_callable_and_exists = not callable(self.usecols) and self.usecols
+        names_larger_num_cols = (self.names and
+                                 len(self.names) - self.leading_cols > num_cols)
 
-        if (self.usecols is not None and not callable(self.usecols) and
+        if self.table_width - self.leading_cols > num_cols:
+            if (usecols_not_callable_and_exists
+                    and self.table_width - self.leading_cols < len(self.usecols)
+                    or names_larger_num_cols):
+                raise ParserError(f"Too many columns specified: expected "
+                                  f"{self.table_width - self.leading_cols} "
+                                  f"and found {num_cols}")
+
+        if (usecols_not_callable_and_exists and
                 all(isinstance(u, int) for u in self.usecols)):
             missing_usecols = [col for col in self.usecols if col >= num_cols]
             if missing_usecols:
@@ -944,6 +963,8 @@ cdef class TextReader:
 
         results = {}
         nused = 0
+        is_default_dict_dtype = isinstance(self.dtype, defaultdict)
+
         for i in range(self.table_width):
             if i < self.leading_cols:
                 # Pass through leading columns always
@@ -974,6 +995,8 @@ cdef class TextReader:
                         col_dtype = self.dtype[name]
                     elif i in self.dtype:
                         col_dtype = self.dtype[i]
+                    elif is_default_dict_dtype:
+                        col_dtype = self.dtype[name]
                 else:
                     if self.dtype.names:
                         # structured array
@@ -1073,8 +1096,27 @@ cdef class TextReader:
                     break
 
         # we had a fallback parse on the dtype, so now try to cast
-        # only allow safe casts, eg. with a nan you cannot safely cast to int
         if col_res is not None and col_dtype is not None:
+            # If col_res is bool, it might actually be a bool array mixed with NaNs
+            # (see _try_bool_flex()). Usually this would be taken care of using
+            # _maybe_upcast(), but if col_dtype is a floating type we should just
+            # take care of that cast here.
+            if col_res.dtype == np.bool_ and is_float_dtype(col_dtype):
+                mask = col_res.view(np.uint8) == na_values[np.uint8]
+                col_res = col_res.astype(col_dtype)
+                np.putmask(col_res, mask, np.nan)
+                return col_res, na_count
+
+            # NaNs are already cast to True here, so can not use astype
+            if col_res.dtype == np.bool_ and is_integer_dtype(col_dtype):
+                if na_count > 0:
+                    raise ValueError(
+                        f"cannot safely convert passed user dtype of "
+                        f"{col_dtype} for {np.bool_} dtyped data in "
+                        f"column {i} due to NA values"
+                    )
+
+            # only allow safe casts, eg. with a nan you cannot safely cast to int
             try:
                 col_res = col_res.astype(col_dtype, casting='safe')
             except TypeError:
@@ -1262,14 +1304,31 @@ cdef class TextReader:
             if self.header is not None:
                 j = i - self.leading_cols
                 # generate extra (bogus) headers if there are more columns than headers
+                # These should be strings, not integers, because otherwise we might get
+                # issues with callables as usecols GH#46997
                 if j >= len(self.header[0]):
-                    return j
+                    return str(j)
                 elif self.has_mi_columns:
                     return tuple(header_row[j] for header_row in self.header)
                 else:
                     return self.header[0][j]
             else:
                 return None
+
+
+# Factor out code common to TextReader.__dealloc__ and TextReader.close
+# It cannot be a class method, since calling self.close() in __dealloc__
+# which causes a class attribute lookup and violates best practices
+# https://cython.readthedocs.io/en/latest/src/userguide/special_methods.html#finalization-method-dealloc
+cdef _close(TextReader reader):
+    # also preemptively free all allocated memory
+    parser_free(reader.parser)
+    if reader.true_set:
+        kh_destroy_str_starts(reader.true_set)
+        reader.true_set = NULL
+    if reader.false_set:
+        kh_destroy_str_starts(reader.false_set)
+        reader.false_set = NULL
 
 
 cdef:
@@ -1403,7 +1462,7 @@ cdef _categorical_convert(parser_t *parser, int64_t col,
         const char *word = NULL
 
         int64_t NA = -1
-        int64_t[:] codes
+        int64_t[::1] codes
         int64_t current_category = 0
 
         char *errors = "strict"

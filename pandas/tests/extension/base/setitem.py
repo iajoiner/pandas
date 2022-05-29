@@ -1,6 +1,13 @@
 import numpy as np
 import pytest
 
+from pandas.core.dtypes.dtypes import (
+    DatetimeTZDtype,
+    IntervalDtype,
+    PandasDtype,
+    PeriodDtype,
+)
+
 import pandas as pd
 import pandas._testing as tm
 from pandas.tests.extension.base.base import BaseExtensionTests
@@ -356,6 +363,50 @@ class BaseSetitemTests(BaseExtensionTests):
             data.astype(object), index=ser.index, name="data", dtype=object
         )
         self.assert_series_equal(result, expected)
+
+    def test_setitem_frame_2d_values(self, data):
+        # GH#44514
+        df = pd.DataFrame({"A": data})
+
+        # These dtypes have non-broken implementations of _can_hold_element
+        has_can_hold_element = isinstance(
+            data.dtype, (PandasDtype, PeriodDtype, IntervalDtype, DatetimeTZDtype)
+        )
+
+        # Avoiding using_array_manager fixture
+        #  https://github.com/pandas-dev/pandas/pull/44514#discussion_r754002410
+        using_array_manager = isinstance(df._mgr, pd.core.internals.ArrayManager)
+
+        blk_data = df._mgr.arrays[0]
+
+        orig = df.copy()
+
+        msg = "will attempt to set the values inplace instead"
+        warn = None
+        if has_can_hold_element and not isinstance(data.dtype, PandasDtype):
+            # PandasDtype excluded because it isn't *really* supported.
+            warn = FutureWarning
+
+        with tm.assert_produces_warning(warn, match=msg):
+            df.iloc[:] = df
+        self.assert_frame_equal(df, orig)
+
+        df.iloc[:-1] = df.iloc[:-1]
+        self.assert_frame_equal(df, orig)
+
+        if isinstance(data.dtype, DatetimeTZDtype):
+            # no warning bc df.values casts to object dtype
+            warn = None
+        with tm.assert_produces_warning(warn, match=msg):
+            df.iloc[:] = df.values
+        self.assert_frame_equal(df, orig)
+        if not using_array_manager:
+            # GH#33457 Check that this setting occurred in-place
+            # FIXME(ArrayManager): this should work there too
+            assert df._mgr.arrays[0] is blk_data
+
+        df.iloc[:-1] = df.values[:-1]
+        self.assert_frame_equal(df, orig)
 
     def test_delitem_series(self, data):
         # GH#40763

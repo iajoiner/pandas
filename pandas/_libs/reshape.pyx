@@ -1,6 +1,5 @@
-import cython
-from cython import Py_ssize_t
-
+cimport cython
+from cython cimport Py_ssize_t
 from numpy cimport (
     int64_t,
     ndarray,
@@ -87,7 +86,7 @@ def explode(ndarray[object] values):
 
     Parameters
     ----------
-    values : object ndarray
+    values : ndarray[object]
 
     Returns
     -------

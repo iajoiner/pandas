@@ -22,7 +22,6 @@ from pandas._libs.tslibs.timezones import (
     dateutil_gettz as gettz,
     get_timezone,
 )
-from pandas.compat import np_datetime64_compat
 import pandas.util._test_decorators as td
 
 from pandas import (
@@ -92,71 +91,65 @@ class TestTimestampProperties:
         assert control.is_month_end
         assert control.is_quarter_end
 
-    def test_fields(self):
-        def check(value, equal):
-            # that we are int like
-            assert isinstance(value, int)
-            assert value == equal
-
+    @pytest.mark.parametrize(
+        "attr, expected",
+        [
+            ["year", 2014],
+            ["month", 12],
+            ["day", 31],
+            ["hour", 23],
+            ["minute", 59],
+            ["second", 0],
+            ["microsecond", 0],
+            ["nanosecond", 0],
+            ["dayofweek", 2],
+            ["day_of_week", 2],
+            ["quarter", 4],
+            ["dayofyear", 365],
+            ["day_of_year", 365],
+            ["week", 1],
+            ["daysinmonth", 31],
+        ],
+    )
+    @pytest.mark.parametrize("tz", [None, "US/Eastern"])
+    def test_fields(self, attr, expected, tz):
         # GH 10050
-        ts = Timestamp("2015-05-10 09:06:03.000100001")
-        check(ts.year, 2015)
-        check(ts.month, 5)
-        check(ts.day, 10)
-        check(ts.hour, 9)
-        check(ts.minute, 6)
-        check(ts.second, 3)
-        msg = "'Timestamp' object has no attribute 'millisecond'"
-        with pytest.raises(AttributeError, match=msg):
-            ts.millisecond
-        check(ts.microsecond, 100)
-        check(ts.nanosecond, 1)
-        check(ts.dayofweek, 6)
-        check(ts.day_of_week, 6)
-        check(ts.quarter, 2)
-        check(ts.dayofyear, 130)
-        check(ts.day_of_year, 130)
-        check(ts.week, 19)
-        check(ts.daysinmonth, 31)
-        check(ts.daysinmonth, 31)
-
         # GH 13303
-        ts = Timestamp("2014-12-31 23:59:00-05:00", tz="US/Eastern")
-        check(ts.year, 2014)
-        check(ts.month, 12)
-        check(ts.day, 31)
-        check(ts.hour, 23)
-        check(ts.minute, 59)
-        check(ts.second, 0)
+        ts = Timestamp("2014-12-31 23:59:00", tz=tz)
+        result = getattr(ts, attr)
+        # that we are int like
+        assert isinstance(result, int)
+        assert result == expected
+
+    @pytest.mark.parametrize("tz", [None, "US/Eastern"])
+    def test_millisecond_raises(self, tz):
+        ts = Timestamp("2014-12-31 23:59:00", tz=tz)
         msg = "'Timestamp' object has no attribute 'millisecond'"
         with pytest.raises(AttributeError, match=msg):
             ts.millisecond
-        check(ts.microsecond, 0)
-        check(ts.nanosecond, 0)
-        check(ts.dayofweek, 2)
-        check(ts.day_of_week, 2)
-        check(ts.quarter, 4)
-        check(ts.dayofyear, 365)
-        check(ts.day_of_year, 365)
-        check(ts.week, 1)
-        check(ts.daysinmonth, 31)
 
-        ts = Timestamp("2014-01-01 00:00:00+01:00")
-        starts = ["is_month_start", "is_quarter_start", "is_year_start"]
-        for start in starts:
-            assert getattr(ts, start)
-        ts = Timestamp("2014-12-31 23:59:59+01:00")
-        ends = ["is_month_end", "is_year_end", "is_quarter_end"]
-        for end in ends:
-            assert getattr(ts, end)
+    @pytest.mark.parametrize(
+        "start", ["is_month_start", "is_quarter_start", "is_year_start"]
+    )
+    @pytest.mark.parametrize("tz", [None, "US/Eastern"])
+    def test_is_start(self, start, tz):
+        ts = Timestamp("2014-01-01 00:00:00", tz=tz)
+        assert getattr(ts, start)
+
+    @pytest.mark.parametrize("end", ["is_month_end", "is_year_end", "is_quarter_end"])
+    @pytest.mark.parametrize("tz", [None, "US/Eastern"])
+    def test_is_end(self, end, tz):
+        ts = Timestamp("2014-12-31 23:59:59", tz=tz)
+        assert getattr(ts, end)
 
     # GH 12806
     @pytest.mark.parametrize(
         "data",
         [Timestamp("2017-08-28 23:00:00"), Timestamp("2017-08-28 23:00:00", tz="EST")],
     )
+    # error: Unsupported operand types for + ("List[None]" and "List[str]")
     @pytest.mark.parametrize(
-        "time_locale", [None] if tm.get_locales() is None else [None] + tm.get_locales()
+        "time_locale", [None] + (tm.get_locales() or [])  # type: ignore[operator]
     )
     def test_names(self, data, time_locale):
         # GH 17354
@@ -292,12 +285,26 @@ class TestTimestamp:
         compare(Timestamp.utcnow(), datetime.utcnow())
         compare(Timestamp.today(), datetime.today())
         current_time = calendar.timegm(datetime.now().utctimetuple())
+        msg = "timezone-aware Timestamp with UTC"
+        with tm.assert_produces_warning(FutureWarning, match=msg):
+            # GH#22451
+            ts_utc = Timestamp.utcfromtimestamp(current_time)
         compare(
-            Timestamp.utcfromtimestamp(current_time),
+            ts_utc,
             datetime.utcfromtimestamp(current_time),
         )
         compare(
             Timestamp.fromtimestamp(current_time), datetime.fromtimestamp(current_time)
+        )
+        compare(
+            # Support tz kwarg in Timestamp.fromtimestamp
+            Timestamp.fromtimestamp(current_time, "UTC"),
+            datetime.fromtimestamp(current_time, utc),
+        )
+        compare(
+            # Support tz kwarg in Timestamp.fromtimestamp
+            Timestamp.fromtimestamp(current_time, tz="UTC"),
+            datetime.fromtimestamp(current_time, utc),
         )
 
         date_component = datetime.utcnow()
@@ -322,8 +329,14 @@ class TestTimestamp:
         compare(Timestamp.utcnow(), datetime.utcnow())
         compare(Timestamp.today(), datetime.today())
         current_time = calendar.timegm(datetime.now().utctimetuple())
+
+        msg = "timezone-aware Timestamp with UTC"
+        with tm.assert_produces_warning(FutureWarning, match=msg):
+            # GH#22451
+            ts_utc = Timestamp.utcfromtimestamp(current_time)
+
         compare(
-            Timestamp.utcfromtimestamp(current_time),
+            ts_utc,
             datetime.utcfromtimestamp(current_time),
         )
         compare(
@@ -432,6 +445,33 @@ class TestTimestamp:
         stamp = Timestamp(datetime(2011, 1, 1))
         assert d[stamp] == 5
 
+    @pytest.mark.parametrize(
+        "timezone, year, month, day, hour",
+        [["America/Chicago", 2013, 11, 3, 1], ["America/Santiago", 2021, 4, 3, 23]],
+    )
+    def test_hash_timestamp_with_fold(self, timezone, year, month, day, hour):
+        # see gh-33931
+        test_timezone = gettz(timezone)
+        transition_1 = Timestamp(
+            year=year,
+            month=month,
+            day=day,
+            hour=hour,
+            minute=0,
+            fold=0,
+            tzinfo=test_timezone,
+        )
+        transition_2 = Timestamp(
+            year=year,
+            month=month,
+            day=day,
+            hour=hour,
+            minute=0,
+            fold=1,
+            tzinfo=test_timezone,
+        )
+        assert hash(transition_1) == hash(transition_2)
+
     def test_tz_conversion_freq(self, tz_naive_fixture):
         # GH25241
         with tm.assert_produces_warning(FutureWarning, match="freq"):
@@ -492,7 +532,7 @@ class TestTimestampNsOperations:
         assert t.value == expected
         assert t.nanosecond == 5
 
-        t = Timestamp(np_datetime64_compat("2011-01-01 00:00:00.000000005Z"))
+        t = Timestamp("2011-01-01 00:00:00.000000005")
         assert repr(t) == "Timestamp('2011-01-01 00:00:00.000000005')"
         assert t.value == expected
         assert t.nanosecond == 5
@@ -508,7 +548,7 @@ class TestTimestampNsOperations:
         assert t.value == expected
         assert t.nanosecond == 10
 
-        t = Timestamp(np_datetime64_compat("2011-01-01 00:00:00.000000010Z"))
+        t = Timestamp("2011-01-01 00:00:00.000000010")
         assert repr(t) == "Timestamp('2011-01-01 00:00:00.000000010')"
         assert t.value == expected
         assert t.nanosecond == 10
@@ -552,6 +592,13 @@ class TestTimestampConversion:
         assert type(result) == type(expected)
         assert result.dtype == expected.dtype
 
+    def test_to_pydatetime_fold(self):
+        # GH#45087
+        tzstr = "dateutil/usr/share/zoneinfo/America/Chicago"
+        ts = Timestamp(year=2013, month=11, day=3, hour=1, minute=0, fold=1, tz=tzstr)
+        dt = ts.to_pydatetime()
+        assert dt.fold == 1
+
     def test_to_pydatetime_nonzero_nano(self):
         ts = Timestamp("2011-01-01 9:00:00.123456789")
 
@@ -579,7 +626,7 @@ class TestTimestampConversion:
         assert stamp == dtval
         assert stamp.tzinfo == dtval.tzinfo
 
-    @td.skip_if_windows_python_3
+    @td.skip_if_windows
     def test_timestamp_to_datetime_explicit_dateutil(self):
         stamp = Timestamp("20090415", tz=gettz("US/Eastern"))
         dtval = stamp.to_pydatetime()
@@ -645,3 +692,159 @@ def test_dt_subclass_add_timedelta(lh, rh):
     result = lh + rh
     expected = SubDatetime(2000, 1, 1, 1)
     assert result == expected
+
+
+class TestNonNano:
+    @pytest.fixture(params=["s", "ms", "us"])
+    def reso(self, request):
+        return request.param
+
+    @pytest.fixture
+    def dt64(self, reso):
+        # cases that are in-bounds for nanosecond, so we can compare against
+        #  the existing implementation.
+        return np.datetime64("2016-01-01", reso)
+
+    @pytest.fixture
+    def ts(self, dt64):
+        return Timestamp._from_dt64(dt64)
+
+    def test_non_nano_construction(self, dt64, ts, reso):
+        assert ts.value == dt64.view("i8")
+
+        if reso == "s":
+            assert ts._reso == 7
+        elif reso == "ms":
+            assert ts._reso == 8
+        elif reso == "us":
+            assert ts._reso == 9
+
+    def test_non_nano_fields(self, dt64, ts):
+        alt = Timestamp(dt64)
+
+        assert ts.year == alt.year
+        assert ts.month == alt.month
+        assert ts.day == alt.day
+        assert ts.hour == ts.minute == ts.second == ts.microsecond == 0
+        assert ts.nanosecond == 0
+
+        assert ts.to_julian_date() == alt.to_julian_date()
+        assert ts.weekday() == alt.weekday()
+        assert ts.isoweekday() == alt.isoweekday()
+
+    def test_start_end_fields(self, ts):
+        assert ts.is_year_start
+        assert ts.is_quarter_start
+        assert ts.is_month_start
+        assert not ts.is_year_end
+        assert not ts.is_month_end
+        assert not ts.is_month_end
+
+        freq = offsets.BDay()
+        ts._set_freq(freq)
+
+        # 2016-01-01 is a Friday, so is year/quarter/month start with this freq
+        msg = "Timestamp.freq is deprecated"
+        with tm.assert_produces_warning(FutureWarning, match=msg):
+            assert ts.is_year_start
+            assert ts.is_quarter_start
+            assert ts.is_month_start
+            assert not ts.is_year_end
+            assert not ts.is_month_end
+            assert not ts.is_month_end
+
+    def test_day_name(self, dt64, ts):
+        alt = Timestamp(dt64)
+        assert ts.day_name() == alt.day_name()
+
+    def test_month_name(self, dt64, ts):
+        alt = Timestamp(dt64)
+        assert ts.month_name() == alt.month_name()
+
+    def test_repr(self, dt64, ts):
+        alt = Timestamp(dt64)
+
+        assert str(ts) == str(alt)
+        assert repr(ts) == repr(alt)
+
+    def test_comparison(self, dt64, ts):
+        alt = Timestamp(dt64)
+
+        assert ts == dt64
+        assert dt64 == ts
+        assert ts == alt
+        assert alt == ts
+
+        assert not ts != dt64
+        assert not dt64 != ts
+        assert not ts != alt
+        assert not alt != ts
+
+        assert not ts < dt64
+        assert not dt64 < ts
+        assert not ts < alt
+        assert not alt < ts
+
+        assert not ts > dt64
+        assert not dt64 > ts
+        assert not ts > alt
+        assert not alt > ts
+
+        assert ts >= dt64
+        assert dt64 >= ts
+        assert ts >= alt
+        assert alt >= ts
+
+        assert ts <= dt64
+        assert dt64 <= ts
+        assert ts <= alt
+        assert alt <= ts
+
+    def test_cmp_cross_reso(self):
+        # numpy gets this wrong because of silent overflow
+        dt64 = np.datetime64(106752, "D")  # won't fit in M8[ns]
+        ts = Timestamp._from_dt64(dt64)
+
+        other = Timestamp(dt64 - 1)
+        assert other < ts
+        assert other.asm8 > ts.asm8  # <- numpy gets this wrong
+        assert ts > other
+        assert ts.asm8 < other.asm8  # <- numpy gets this wrong
+        assert not other == ts
+        assert ts != other
+
+    @pytest.mark.xfail(reason="Dispatches to np.datetime64 which is wrong")
+    def test_cmp_cross_reso_reversed_dt64(self):
+        dt64 = np.datetime64(106752, "D")  # won't fit in M8[ns]
+        ts = Timestamp._from_dt64(dt64)
+        other = Timestamp(dt64 - 1)
+
+        assert other.asm8 < ts
+
+    def test_pickle(self, ts):
+        rt = tm.round_trip_pickle(ts)
+        assert rt._reso == ts._reso
+        assert rt == ts
+
+    def test_asm8(self, dt64, ts):
+        rt = ts.asm8
+        assert rt == dt64
+        assert rt.dtype == dt64.dtype
+
+    def test_to_numpy(self, dt64, ts):
+        res = ts.to_numpy()
+        assert res == dt64
+        assert res.dtype == dt64.dtype
+
+    def test_to_datetime64(self, dt64, ts):
+        res = ts.to_datetime64()
+        assert res == dt64
+        assert res.dtype == dt64.dtype
+
+    def test_timestamp(self, dt64, ts):
+        alt = Timestamp(dt64)
+        assert ts.timestamp() == alt.timestamp()
+
+    def test_to_period(self, dt64, ts):
+        alt = Timestamp(dt64)
+        assert ts.to_period("D") == alt.to_period("D")

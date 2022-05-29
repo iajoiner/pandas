@@ -16,7 +16,6 @@ from pandas._config import get_option
 from pandas._libs import (
     NaT,
     NaTType,
-    Timedelta,
     iNaT,
     lib,
 )
@@ -72,7 +71,7 @@ set_use_bottleneck(get_option("compute.use_bottleneck"))
 
 
 class disallow:
-    def __init__(self, *dtypes: Dtype):
+    def __init__(self, *dtypes: Dtype) -> None:
         super().__init__()
         self.dtypes = tuple(pandas_dtype(dtype).type for dtype in dtypes)
 
@@ -104,7 +103,7 @@ class disallow:
 
 
 class bottleneck_switch:
-    def __init__(self, name=None, **kwargs):
+    def __init__(self, name=None, **kwargs) -> None:
         self.name = name
         self.kwargs = kwargs
 
@@ -367,19 +366,23 @@ def _wrap_results(result, dtype: np.dtype, fill_value=None):
                 result = np.datetime64("NaT", "ns")
             else:
                 result = np.int64(result).view("datetime64[ns]")
+            # retain original unit
+            result = result.astype(dtype, copy=False)
         else:
             # If we have float dtype, taking a view will give the wrong result
             result = result.astype(dtype)
     elif is_timedelta64_dtype(dtype):
         if not isinstance(result, np.ndarray):
-            if result == fill_value:
-                result = np.nan
+            if result == fill_value or np.isnan(result):
+                result = np.timedelta64("NaT").astype(dtype)
 
-            # raise if we have a timedelta64[ns] which is too large
-            if np.fabs(result) > lib.i8max:
+            elif np.fabs(result) > lib.i8max:
+                # raise if we have a timedelta64[ns] which is too large
                 raise ValueError("overflow in timedelta operation")
+            else:
+                # return a timedelta64 with the original unit
+                result = np.int64(result).astype(dtype, copy=False)
 
-            result = Timedelta(result, unit="ns")
         else:
             result = result.astype("m8[ns]").view(dtype)
 
@@ -454,7 +457,8 @@ def _na_for_min_count(values: np.ndarray, axis: int | None) -> Scalar | np.ndarr
 def maybe_operate_rowwise(func: F) -> F:
     """
     NumPy operations on C-contiguous ndarrays with axis=1 can be
-    very slow. Operate row-by-row and concatenate the results.
+    very slow if axis 1 >> axis 0.
+    Operate row-by-row and concatenate the results.
     """
 
     @functools.wraps(func)
@@ -463,6 +467,9 @@ def maybe_operate_rowwise(func: F) -> F:
             axis == 1
             and values.ndim == 2
             and values.flags["C_CONTIGUOUS"]
+            # only takes this path for wide arrays (long dataframes), for threshold see
+            # https://github.com/pandas-dev/pandas/pull/43311#issuecomment-974891737
+            and (values.shape[1] / 1000) > values.shape[0]
             and values.dtype != object
             and values.dtype != bool
         ):
@@ -637,7 +644,7 @@ def _mask_datetimelike_result(
         result[axis_mask] = iNaT  # type: ignore[index]
     else:
         if mask.any():
-            return NaT
+            return np.int64(iNaT).view(orig_values.dtype)
     return result
 
 
@@ -752,13 +759,10 @@ def nanmedian(values, *, axis=None, skipna=True, mask=None):
         if mask is not None:
             values[mask] = np.nan
 
-    if axis is None:
-        values = values.ravel("K")
-
     notempty = values.size
 
     # an array from a frame
-    if values.ndim > 1:
+    if values.ndim > 1 and axis is not None:
 
         # there's a non-empty array to apply over otherwise numpy raises
         if notempty:
@@ -1201,7 +1205,7 @@ def nanskew(
     adjusted = values - mean
     if skipna and mask is not None:
         np.putmask(adjusted, mask, 0)
-    adjusted2 = adjusted ** 2
+    adjusted2 = adjusted**2
     adjusted3 = adjusted2 * adjusted
     m2 = adjusted2.sum(axis, dtype=np.float64)
     m3 = adjusted3.sum(axis, dtype=np.float64)
@@ -1214,7 +1218,7 @@ def nanskew(
     m3 = _zero_out_fperr(m3)
 
     with np.errstate(invalid="ignore", divide="ignore"):
-        result = (count * (count - 1) ** 0.5 / (count - 2)) * (m3 / m2 ** 1.5)
+        result = (count * (count - 1) ** 0.5 / (count - 2)) * (m3 / m2**1.5)
 
     dtype = values.dtype
     if is_float_dtype(dtype):
@@ -1289,15 +1293,15 @@ def nankurt(
     adjusted = values - mean
     if skipna and mask is not None:
         np.putmask(adjusted, mask, 0)
-    adjusted2 = adjusted ** 2
-    adjusted4 = adjusted2 ** 2
+    adjusted2 = adjusted**2
+    adjusted4 = adjusted2**2
     m2 = adjusted2.sum(axis, dtype=np.float64)
     m4 = adjusted4.sum(axis, dtype=np.float64)
 
     with np.errstate(invalid="ignore", divide="ignore"):
         adj = 3 * (count - 1) ** 2 / ((count - 2) * (count - 3))
         numerator = count * (count + 1) * (count - 1) * m4
-        denominator = (count - 2) * (count - 3) * m2 ** 2
+        denominator = (count - 2) * (count - 3) * m2**2
 
     # floating point error
     #
@@ -1386,14 +1390,10 @@ def _maybe_arg_null_out(
     if axis is None or not getattr(result, "ndim", False):
         if skipna:
             if mask.all():
-                # error: Incompatible types in assignment (expression has type
-                # "int", variable has type "ndarray")
-                result = -1  # type: ignore[assignment]
+                return -1
         else:
             if mask.any():
-                # error: Incompatible types in assignment (expression has type
-                # "int", variable has type "ndarray")
-                result = -1  # type: ignore[assignment]
+                return -1
     else:
         if skipna:
             na_mask = mask.all(axis)
@@ -1661,93 +1661,6 @@ nanlt = make_nancomp(operator.lt)
 nanle = make_nancomp(operator.le)
 naneq = make_nancomp(operator.eq)
 nanne = make_nancomp(operator.ne)
-
-
-def _nanpercentile_1d(
-    values: np.ndarray,
-    mask: npt.NDArray[np.bool_],
-    q: np.ndarray,
-    na_value: Scalar,
-    interpolation,
-) -> Scalar | np.ndarray:
-    """
-    Wrapper for np.percentile that skips missing values, specialized to
-    1-dimensional case.
-
-    Parameters
-    ----------
-    values : array over which to find quantiles
-    mask : ndarray[bool]
-        locations in values that should be considered missing
-    q : np.ndarray[float64] of quantile indices to find
-    na_value : scalar
-        value to return for empty or all-null values
-    interpolation : str
-
-    Returns
-    -------
-    quantiles : scalar or array
-    """
-    # mask is Union[ExtensionArray, ndarray]
-    values = values[~mask]
-
-    if len(values) == 0:
-        return np.array([na_value] * len(q), dtype=values.dtype)
-
-    return np.percentile(values, q, interpolation=interpolation)
-
-
-def nanpercentile(
-    values: np.ndarray,
-    q: np.ndarray,
-    *,
-    na_value,
-    mask: npt.NDArray[np.bool_],
-    interpolation,
-):
-    """
-    Wrapper for np.percentile that skips missing values.
-
-    Parameters
-    ----------
-    values : np.ndarray[ndim=2]  over which to find quantiles
-    q : np.ndarray[float64] of quantile indices to find
-    na_value : scalar
-        value to return for empty or all-null values
-    mask : ndarray[bool]
-        locations in values that should be considered missing
-    interpolation : str
-
-    Returns
-    -------
-    quantiles : scalar or array
-    """
-
-    if values.dtype.kind in ["m", "M"]:
-        # need to cast to integer to avoid rounding errors in numpy
-        result = nanpercentile(
-            values.view("i8"),
-            q=q,
-            na_value=na_value.view("i8"),
-            mask=mask,
-            interpolation=interpolation,
-        )
-
-        # Note: we have to do `astype` and not view because in general we
-        #  have float result at this point, not i8
-        return result.astype(values.dtype)
-
-    if not lib.is_scalar(mask) and mask.any():
-        # Caller is responsible for ensuring mask shape match
-        assert mask.shape == values.shape
-        result = [
-            _nanpercentile_1d(val, m, q, na_value, interpolation=interpolation)
-            for (val, m) in zip(list(values), list(mask))
-        ]
-        result = np.array(result, dtype=values.dtype, copy=False).T
-        return result
-    else:
-        return np.percentile(values, q, axis=1, interpolation=interpolation)
 
 
 def na_accum_func(values: ArrayLike, accum_func, *, skipna: bool) -> ArrayLike:

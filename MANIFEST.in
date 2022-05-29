@@ -1,4 +1,5 @@
 include RELEASE.md
+include versioneer.py
 
 graft doc
 prune doc/build
@@ -36,6 +37,7 @@ global-exclude *.xpt
 global-exclude *.cpt
 global-exclude *.xz
 global-exclude *.zip
+global-exclude *.zst
 global-exclude *~
 global-exclude .DS_Store
 global-exclude .git*
@@ -53,9 +55,6 @@ global-exclude *.pxi
 # exclude the whole directory to avoid running related tests in sdist
 prune pandas/tests/io/parser/data
 
-include versioneer.py
-include pandas/_version.py
-include pandas/io/formats/templates/*.tpl
-
+# Selectively re-add *.cxx files that were excluded above
 graft pandas/_libs/src
 graft pandas/_libs/tslibs/src

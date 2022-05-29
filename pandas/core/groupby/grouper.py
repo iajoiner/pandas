@@ -106,11 +106,10 @@ class Grouper:
             However, loffset is also deprecated for ``.resample(...)``
             See: :class:`DataFrame.resample`
 
-    origin : {{'epoch', 'start', 'start_day', 'end', 'end_day'}}, Timestamp
-        or str, default 'start_day'
+    origin : Timestamp or str, default 'start_day'
         The timestamp on which to adjust the grouping. The timezone of origin must
         match the timezone of the index.
-        If a timestamp is not used, these values are also supported:
+        If string, must be one of the following:
 
         - 'epoch': `origin` is 1970-01-01
         - 'start': `origin` is the first value of the timeseries
@@ -264,7 +263,7 @@ class Grouper:
     _gpr_index: Index | None
     _grouper: Index | None
 
-    _attributes: tuple[str, ...] = ("key", "level", "freq", "axis", "sort")
+    _attributes: tuple[str, ...] = ("key", "level", "freq", "axis", "sort", "dropna")
 
     def __new__(cls, *args, **kwargs):
         if kwargs.get("freq") is not None:
@@ -282,12 +281,13 @@ class Grouper:
         axis: int = 0,
         sort: bool = False,
         dropna: bool = True,
-    ):
+    ) -> None:
         self.key = key
         self.level = level
         self.freq = freq
         self.axis = axis
         self.sort = sort
+        self.dropna = dropna
 
         self.grouper = None
         self._gpr_index = None
@@ -296,7 +296,6 @@ class Grouper:
         self.binner = None
         self._grouper = None
         self._indexer = None
-        self.dropna = dropna
 
     @final
     @property
@@ -340,7 +339,7 @@ class Grouper:
         return self.binner, self.grouper, self.obj  # type: ignore[return-value]
 
     @final
-    def _set_grouper(self, obj: NDFrame, sort: bool = False):
+    def _set_grouper(self, obj: NDFrame, sort: bool = False) -> None:
         """
         given an object and the specifications, setup the internal grouper
         for this particular specification
@@ -401,7 +400,7 @@ class Grouper:
                         raise ValueError(f"The level {level} is not valid")
 
         # possibly sort
-        if (self.sort or sort) and not ax.is_monotonic:
+        if (self.sort or sort) and not ax.is_monotonic_increasing:
             # use stable sort to support first, last, nth
             # TODO: why does putting na_position="first" fix datetimelike cases?
             indexer = self.indexer = ax.array.argsort(
@@ -414,7 +413,6 @@ class Grouper:
         # "NDFrameT", variable has type "None")
         self.obj = obj  # type: ignore[assignment]
         self._gpr_index = ax
-        return self._gpr_index
 
     @final
     @property
@@ -460,7 +458,7 @@ class Grouping:
       * groups : dict of {group -> label_list}
     """
 
-    _codes: np.ndarray | None = None
+    _codes: npt.NDArray[np.signedinteger] | None = None
     _group_index: Index | None = None
     _passed_categorical: bool
     _all_grouper: Categorical | None
@@ -476,7 +474,7 @@ class Grouping:
         observed: bool = False,
         in_axis: bool = False,
         dropna: bool = True,
-    ):
+    ) -> None:
         self.level = level
         self._orig_grouper = grouper
         self.grouping_vector = _convert_grouper(index, grouper)
@@ -615,7 +613,7 @@ class Grouping:
         return values._reverse_indexer()
 
     @property
-    def codes(self) -> np.ndarray:
+    def codes(self) -> npt.NDArray[np.signedinteger]:
         if self._codes is not None:
             # _codes is set in __init__ for MultiIndex cases
             return self._codes
@@ -658,7 +656,7 @@ class Grouping:
         return Index._with_infer(uniques, name=self.name)
 
     @cache_readonly
-    def _codes_and_uniques(self) -> tuple[np.ndarray, ArrayLike]:
+    def _codes_and_uniques(self) -> tuple[npt.NDArray[np.signedinteger], ArrayLike]:
         if self._passed_categorical:
             # we make a CategoricalIndex out of the cat grouper
             # preserving the categories / ordered attributes
@@ -681,7 +679,7 @@ class Grouping:
         elif isinstance(self.grouping_vector, ops.BaseGrouper):
             # we have a list of groupers
             codes = self.grouping_vector.codes_info
-            uniques = self.grouping_vector.result_arraylike
+            uniques = self.grouping_vector.result_index._values
         else:
             # GH35667, replace dropna=False with na_sentinel=None
             if not self._dropna:
@@ -801,7 +799,7 @@ def get_grouper(
 
     # what are we after, exactly?
     any_callable = any(callable(g) or isinstance(g, dict) for g in keys)
-    any_groupers = any(isinstance(g, Grouper) for g in keys)
+    any_groupers = any(isinstance(g, (Grouper, Grouping)) for g in keys)
     any_arraylike = any(
         isinstance(g, (list, tuple, Series, Index, np.ndarray)) for g in keys
     )
@@ -888,12 +886,6 @@ def get_grouper(
         else:
             in_axis = False
 
-        if is_categorical_dtype(gpr) and len(gpr) != obj.shape[axis]:
-            raise ValueError(
-                f"Length of grouper ({len(gpr)}) and axis ({obj.shape[axis]}) "
-                "must be same length"
-            )
-
         # create the Grouping
         # allow us to passing the actual Grouping as the gpr
         ping = (
@@ -939,7 +931,7 @@ def _convert_grouper(axis: Index, grouper):
             return grouper.reindex(axis)._values
     elif isinstance(grouper, MultiIndex):
         return grouper._values
-    elif isinstance(grouper, (list, tuple, Series, Index, np.ndarray)):
+    elif isinstance(grouper, (list, tuple, Index, Categorical, np.ndarray)):
         if len(grouper) != len(axis):
             raise ValueError("Grouper and axis must be same length")
 

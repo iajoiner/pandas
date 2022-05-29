@@ -3,8 +3,6 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-import pandas.util._test_decorators as td
-
 import pandas as pd
 from pandas import (
     Categorical,
@@ -83,7 +81,7 @@ def test_apply_use_categorical_name(df):
     assert result.index.names[0] == "C"
 
 
-def test_basic():
+def test_basic():  # TODO: split this test
 
     cats = Categorical(
         ["a", "a", "a", "b", "b", "b", "c", "c", "c"],
@@ -105,7 +103,9 @@ def test_basic():
     gb = df.groupby("A", observed=False)
     exp_idx = CategoricalIndex(["a", "b", "z"], name="A", ordered=True)
     expected = DataFrame({"values": Series([3, 7, 0], index=exp_idx)})
-    result = gb.sum()
+    msg = "The default value of numeric_only"
+    with tm.assert_produces_warning(FutureWarning, match=msg):
+        result = gb.sum()
     tm.assert_frame_equal(result, expected)
 
     # GH 8623
@@ -144,9 +144,24 @@ def test_basic():
         df.a.groupby(c, observed=False).transform(lambda xs: np.sum(xs)), df["a"]
     )
     tm.assert_frame_equal(df.groupby(c, observed=False).transform(sum), df[["a"]])
-    tm.assert_frame_equal(
-        df.groupby(c, observed=False).transform(lambda xs: np.max(xs)), df[["a"]]
-    )
+
+    gbc = df.groupby(c, observed=False)
+    with tm.assert_produces_warning(
+        FutureWarning, match="scalar max", check_stacklevel=False
+    ):
+        # stacklevel is thrown off (i think) bc the stack goes through numpy C code
+        result = gbc.transform(lambda xs: np.max(xs))
+    tm.assert_frame_equal(result, df[["a"]])
+
+    with tm.assert_produces_warning(None):
+        result2 = gbc.transform(lambda xs: np.max(xs, axis=0))
+        result3 = gbc.transform(max)
+        result4 = gbc.transform(np.maximum.reduce)
+        result5 = gbc.transform(lambda xs: np.maximum.reduce(xs))
+    tm.assert_frame_equal(result2, df[["a"]], check_dtype=False)
+    tm.assert_frame_equal(result3, df[["a"]], check_dtype=False)
+    tm.assert_frame_equal(result4, df[["a"]])
+    tm.assert_frame_equal(result5, df[["a"]])
 
     # Filter
     tm.assert_series_equal(df.a.groupby(c, observed=False).filter(np.all), df["a"])
@@ -258,7 +273,7 @@ def test_sorting_with_different_categoricals():
     index = ["low", "med", "high", "low", "med", "high"]
     index = Categorical(index, categories=["low", "med", "high"], ordered=True)
     index = [["A", "A", "A", "B", "B", "B"], CategoricalIndex(index)]
-    index = MultiIndex.from_arrays(index, names=["group", None])
+    index = MultiIndex.from_arrays(index, names=["group", "dose"])
     expected = Series([2] * 6, index=index, name="dose")
     tm.assert_series_equal(result, expected)
 
@@ -301,9 +316,8 @@ def test_apply(ordered):
     tm.assert_series_equal(result, expected)
 
 
-# TODO(ArrayManager) incorrect dtype for mean()
-@td.skip_array_manager_not_yet_implemented
-def test_observed(observed, using_array_manager):
+@pytest.mark.filterwarnings("ignore:.*value of numeric_only.*:FutureWarning")
+def test_observed(observed):
     # multiple groupers, don't re-expand the output space
     # of the grouper
     # gh-14942 (implement)
@@ -668,9 +682,30 @@ def test_bins_unequal_len():
     bins = pd.cut(series.dropna().values, 4)
 
     # len(bins) != len(series) here
-    msg = r"Length of grouper \(8\) and axis \(10\) must be same length"
-    with pytest.raises(ValueError, match=msg):
+    with pytest.raises(ValueError, match="Grouper and axis must be same length"):
         series.groupby(bins).mean()
+
+
+@pytest.mark.parametrize(
+    ["series", "data"],
+    [
+        # Group a series with length and index equal to those of the grouper.
+        (Series(range(4)), {"A": [0, 3], "B": [1, 2]}),
+        # Group a series with length equal to that of the grouper and index unequal to
+        # that of the grouper.
+        (Series(range(4)).rename(lambda idx: idx + 1), {"A": [2], "B": [0, 1]}),
+        # GH44179: Group a series with length unequal to that of the grouper.
+        (Series(range(7)), {"A": [0, 3], "B": [1, 2]}),
+    ],
+)
+def test_categorical_series(series, data):
+    # Group the given series by a series with categorical data type such that group A
+    # takes indices 0 and 3 and group B indices 1 and 2, obtaining the values mapped in
+    # the given data.
+    groupby = series.groupby(Series(list("ABBA"), dtype="category"))
+    result = groupby.aggregate(list)
+    expected = Series(data, index=CategoricalIndex(data.keys()))
+    tm.assert_series_equal(result, expected)
 
 
 def test_as_index():
@@ -775,8 +810,12 @@ def test_preserve_categorical_dtype():
         }
     )
     for col in ["C1", "C2"]:
-        result1 = df.groupby(by=col, as_index=False, observed=False).mean()
-        result2 = df.groupby(by=col, as_index=True, observed=False).mean().reset_index()
+        msg = "The default value of numeric_only"
+        with tm.assert_produces_warning(FutureWarning, match=msg):
+            result1 = df.groupby(by=col, as_index=False, observed=False).mean()
+            result2 = (
+                df.groupby(by=col, as_index=True, observed=False).mean().reset_index()
+            )
         expected = exp_full.reindex(columns=result1.columns)
         tm.assert_frame_equal(result1, expected)
         tm.assert_frame_equal(result2, expected)
@@ -1325,6 +1364,7 @@ def test_series_groupby_on_2_categoricals_unobserved(reduction_func, observed, r
             reason="TODO: implemented SeriesGroupBy.corrwith. See GH 32293"
         )
         request.node.add_marker(mark)
+    warn = FutureWarning if reduction_func == "mad" else None
 
     df = DataFrame(
         {
@@ -1339,7 +1379,8 @@ def test_series_groupby_on_2_categoricals_unobserved(reduction_func, observed, r
 
     series_groupby = df.groupby(["cat_1", "cat_2"], observed=observed)["value"]
     agg = getattr(series_groupby, reduction_func)
-    result = agg(*args)
+    with tm.assert_produces_warning(warn, match="The 'mad' method is deprecated"):
+        result = agg(*args)
 
     assert len(result) == expected_length
 
@@ -1358,6 +1399,7 @@ def test_series_groupby_on_2_categoricals_unobserved_zeroes_or_nans(
             reason="TODO: implemented SeriesGroupBy.corrwith. See GH 32293"
         )
         request.node.add_marker(mark)
+    warn = FutureWarning if reduction_func == "mad" else None
 
     df = DataFrame(
         {
@@ -1371,7 +1413,8 @@ def test_series_groupby_on_2_categoricals_unobserved_zeroes_or_nans(
 
     series_groupby = df.groupby(["cat_1", "cat_2"], observed=False)["value"]
     agg = getattr(series_groupby, reduction_func)
-    result = agg(*args)
+    with tm.assert_produces_warning(warn, match="The 'mad' method is deprecated"):
+        result = agg(*args)
 
     zero_or_nan = _results_for_groupbys_with_missing_categories[reduction_func]
 
@@ -1394,6 +1437,7 @@ def test_dataframe_groupby_on_2_categoricals_when_observed_is_true(reduction_fun
     # does not return the categories that are not in df when observed=True
     if reduction_func == "ngroup":
         pytest.skip("ngroup does not return the Categories on the index")
+    warn = FutureWarning if reduction_func == "mad" else None
 
     df = DataFrame(
         {
@@ -1407,7 +1451,8 @@ def test_dataframe_groupby_on_2_categoricals_when_observed_is_true(reduction_fun
     df_grp = df.groupby(["cat_1", "cat_2"], observed=True)
 
     args = {"nth": [0], "corrwith": [df]}.get(reduction_func, [])
-    res = getattr(df_grp, reduction_func)(*args)
+    with tm.assert_produces_warning(warn, match="The 'mad' method is deprecated"):
+        res = getattr(df_grp, reduction_func)(*args)
 
     for cat in unobserved_cats:
         assert cat not in res.index
@@ -1415,7 +1460,7 @@ def test_dataframe_groupby_on_2_categoricals_when_observed_is_true(reduction_fun
 
 @pytest.mark.parametrize("observed", [False, None])
 def test_dataframe_groupby_on_2_categoricals_when_observed_is_false(
-    reduction_func, observed, request
+    reduction_func, observed
 ):
     # GH 23865
     # GH 27075
@@ -1424,6 +1469,7 @@ def test_dataframe_groupby_on_2_categoricals_when_observed_is_false(
 
     if reduction_func == "ngroup":
         pytest.skip("ngroup does not return the Categories on the index")
+    warn = FutureWarning if reduction_func == "mad" else None
 
     df = DataFrame(
         {
@@ -1437,7 +1483,8 @@ def test_dataframe_groupby_on_2_categoricals_when_observed_is_false(
     df_grp = df.groupby(["cat_1", "cat_2"], observed=observed)
 
     args = {"nth": [0], "corrwith": [df]}.get(reduction_func, [])
-    res = getattr(df_grp, reduction_func)(*args)
+    with tm.assert_produces_warning(warn, match="The 'mad' method is deprecated"):
+        res = getattr(df_grp, reduction_func)(*args)
 
     expected = _results_for_groupbys_with_missing_categories[reduction_func]
 
@@ -1492,7 +1539,7 @@ def test_groupby_agg_non_numeric():
 
 
 @pytest.mark.parametrize("func", ["first", "last"])
-def test_groupy_first_returned_categorical_instead_of_dataframe(func):
+def test_groupby_first_returned_categorical_instead_of_dataframe(func):
     # GH 28641: groupby drops index, when grouping over categorical column with
     # first/last. Renamed Categorical instead of DataFrame previously.
     df = DataFrame({"A": [1997], "B": Series(["b"], dtype="category").cat.as_ordered()})
@@ -1747,3 +1794,36 @@ def test_groupby_last_first_preserve_categoricaldtype(func):
         Categorical([1, 2, 3]), name="b", index=Index([1, 2, 3], name="a")
     )
     tm.assert_series_equal(expected, result)
+
+
+def test_groupby_categorical_observed_nunique():
+    # GH#45128
+    df = DataFrame({"a": [1, 2], "b": [1, 2], "c": [10, 11]})
+    df = df.astype(dtype={"a": "category", "b": "category"})
+    result = df.groupby(["a", "b"], observed=True).nunique()["c"]
+    expected = Series(
+        [1, 1],
+        index=MultiIndex.from_arrays(
+            [CategoricalIndex([1, 2], name="a"), CategoricalIndex([1, 2], name="b")]
+        ),
+        name="c",
+    )
+    tm.assert_series_equal(result, expected)
+
+
+def test_groupby_categorical_aggregate_functions():
+    # GH#37275
+    dtype = pd.CategoricalDtype(categories=["small", "big"], ordered=True)
+    df = DataFrame(
+        [[1, "small"], [1, "big"], [2, "small"]], columns=["grp", "description"]
+    ).astype({"description": dtype})
+
+    result = df.groupby("grp")["description"].max()
+    expected = Series(
+        ["big", "small"],
+        index=Index([1, 2], name="grp"),
+        name="description",
+        dtype=pd.CategoricalDtype(categories=["small", "big"], ordered=True),
+    )
+
+    tm.assert_series_equal(result, expected)

@@ -19,7 +19,7 @@ New features
   intersection of the other axes. Improves performance of ``Series.append`` and
   ``DataFrame.append`` (:issue:`468`, :issue:`479`, :issue:`273`)
 
-- :ref:`Can <merging.concatenation>` pass multiple DataFrames to
+- Can pass multiple DataFrames to
   ``DataFrame.append`` to concatenate (stack) and multiple Series to
   ``Series.append`` too
 
@@ -190,11 +190,11 @@ been added:
     :header: "Method","Description"
     :widths: 40,60
 
-	``Series.iget_value(i)``, Retrieve value stored at location ``i``
-	``Series.iget(i)``, Alias for ``iget_value``
-	``DataFrame.irow(i)``, Retrieve the ``i``-th row
-	``DataFrame.icol(j)``, Retrieve the ``j``-th column
-	"``DataFrame.iget_value(i, j)``", Retrieve the value at row ``i`` and column ``j``
+        ``Series.iget_value(i)``, Retrieve value stored at location ``i``
+        ``Series.iget(i)``, Alias for ``iget_value``
+        ``DataFrame.irow(i)``, Retrieve the ``i``-th row
+        ``DataFrame.icol(j)``, Retrieve the ``j``-th column
+        "``DataFrame.iget_value(i, j)``", Retrieve the value at row ``i`` and column ``j``
 
 API tweaks regarding label-based slicing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

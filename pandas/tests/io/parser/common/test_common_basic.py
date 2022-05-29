@@ -41,7 +41,7 @@ def test_override_set_noconvert_columns():
     # Usecols needs to be sorted in _set_noconvert_columns based
     # on the test_usecols_with_parse_dates test from test_usecols.py
     class MyTextFileReader(TextFileReader):
-        def __init__(self):
+        def __init__(self) -> None:
             self._currow = 0
             self.squeeze = False
 
@@ -143,7 +143,8 @@ c,3
     result = parser.read_csv_check_warnings(
         FutureWarning,
         "The squeeze argument has been deprecated "
-        "and will be removed in a future version.\n\n",
+        "and will be removed in a future version. "
+        'Append .squeeze\\("columns"\\) to the call to squeeze.\n\n',
         StringIO(data),
         index_col=0,
         header=None,
@@ -698,7 +699,7 @@ def test_read_csv_and_table_sys_setprofile(all_parsers, read_func):
 def test_first_row_bom(all_parsers):
     # see gh-26545
     parser = all_parsers
-    data = '''\ufeff"Head1"	"Head2"	"Head3"'''
+    data = '''\ufeff"Head1"\t"Head2"\t"Head3"'''
 
     result = parser.read_csv(StringIO(data), delimiter="\t")
     expected = DataFrame(columns=["Head1", "Head2", "Head3"])
@@ -709,7 +710,7 @@ def test_first_row_bom(all_parsers):
 def test_first_row_bom_unquoted(all_parsers):
     # see gh-36343
     parser = all_parsers
-    data = """\ufeffHead1	Head2	Head3"""
+    data = """\ufeffHead1\tHead2\tHead3"""
 
     result = parser.read_csv(StringIO(data), delimiter="\t")
     expected = DataFrame(columns=["Head1", "Head2", "Head3"])
@@ -787,6 +788,22 @@ def test_read_csv_delimiter_and_sep_no_default(all_parsers):
         parser.read_csv(f, sep=" ", delimiter=".")
 
 
+@pytest.mark.parametrize("kwargs", [{"delimiter": "\n"}, {"sep": "\n"}])
+def test_read_csv_line_break_as_separator(kwargs, all_parsers):
+    # GH#43528
+    parser = all_parsers
+    data = """a,b,c
+1,2,3
+    """
+    msg = (
+        r"Specified \\n as separator or delimiter. This forces the python engine "
+        r"which does not accept a line terminator. Hence it is not allowed to use "
+        r"the line terminator as separator."
+    )
+    with pytest.raises(ValueError, match=msg):
+        parser.read_csv(StringIO(data), **kwargs)
+
+
 def test_read_csv_posargs_deprecation(all_parsers):
     # GH 41485
     f = StringIO("a,b\n1,2")
@@ -822,7 +839,8 @@ def test_names_and_prefix_not_None_raises(all_parsers, func):
     parser = all_parsers
     msg = "Specified named and prefix; you can only specify one."
     with pytest.raises(ValueError, match=msg):
-        getattr(parser, func)(f, names=["a", "b"], prefix="x")
+        with tm.assert_produces_warning(FutureWarning):
+            getattr(parser, func)(f, names=["a", "b"], prefix="x")
 
 
 @pytest.mark.parametrize("func", ["read_csv", "read_table"])
@@ -832,7 +850,15 @@ def test_names_and_prefix_explicit_None(all_parsers, names, prefix, func):
     f = StringIO("a,b\n1,2")
     expected = DataFrame({"x0": ["a", "1"], "x1": ["b", "2"]})
     parser = all_parsers
-    result = getattr(parser, func)(f, names=names, sep=",", prefix=prefix, header=None)
+    if prefix is not None:
+        with tm.assert_produces_warning(FutureWarning, check_stacklevel=False):
+            result = getattr(parser, func)(
+                f, names=names, sep=",", prefix=prefix, header=None
+            )
+    else:
+        result = getattr(parser, func)(
+            f, names=names, sep=",", prefix=prefix, header=None
+        )
     tm.assert_frame_equal(result, expected)
 
 
@@ -877,7 +903,8 @@ def test_deprecated_bad_lines_warns(all_parsers, csv1, on_bad_lines):
     parser.read_csv_check_warnings(
         FutureWarning,
         f"The {on_bad_lines}_bad_lines argument has been deprecated "
-        "and will be removed in a future version.\n\n",
+        "and will be removed in a future version. "
+        "Use on_bad_lines in the future.\n\n",
         csv1,
         **kwds,
     )

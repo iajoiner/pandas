@@ -1,8 +1,8 @@
-# pyright: reportUntypedFunctionDecorator = false
 from __future__ import annotations
 
 import functools
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
 )
@@ -12,18 +12,15 @@ import numpy as np
 from pandas._typing import Scalar
 from pandas.compat._optional import import_optional_dependency
 
-from pandas.core.util.numba_ import (
-    NUMBA_FUNC_CACHE,
-    get_jit_arguments,
-    jit_user_function,
-)
+from pandas.core.util.numba_ import jit_user_function
 
 
+@functools.lru_cache(maxsize=None)
 def generate_numba_apply_func(
-    kwargs: dict[str, Any],
     func: Callable[..., Scalar],
-    engine_kwargs: dict[str, bool] | None,
-    name: str,
+    nopython: bool,
+    nogil: bool,
+    parallel: bool,
 ):
     """
     Generate a numba jitted apply function specified by values from engine_kwargs.
@@ -36,30 +33,26 @@ def generate_numba_apply_func(
 
     Parameters
     ----------
-    kwargs : dict
-        **kwargs to be passed into the function
     func : function
         function to be applied to each window and will be JITed
-    engine_kwargs : dict
-        dictionary of arguments to be passed into numba.jit
-    name: str
-        name of the caller (Rolling/Expanding)
+    nopython : bool
+        nopython to be passed into numba.jit
+    nogil : bool
+        nogil to be passed into numba.jit
+    parallel : bool
+        parallel to be passed into numba.jit
 
     Returns
     -------
     Numba function
     """
-    nopython, nogil, parallel = get_jit_arguments(engine_kwargs, kwargs)
-
-    cache_key = (func, f"{name}_apply_single")
-    if cache_key in NUMBA_FUNC_CACHE:
-        return NUMBA_FUNC_CACHE[cache_key]
-
     numba_func = jit_user_function(func, nopython, nogil, parallel)
-    numba = import_optional_dependency("numba")
+    if TYPE_CHECKING:
+        import numba
+    else:
+        numba = import_optional_dependency("numba")
 
-    # error: Untyped decorator makes function "roll_apply" untyped
-    @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)  # type: ignore[misc]
+    @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)
     def roll_apply(
         values: np.ndarray,
         begin: np.ndarray,
@@ -82,12 +75,15 @@ def generate_numba_apply_func(
     return roll_apply
 
 
+@functools.lru_cache(maxsize=None)
 def generate_numba_ewm_func(
-    engine_kwargs: dict[str, bool] | None,
+    nopython: bool,
+    nogil: bool,
+    parallel: bool,
     com: float,
     adjust: bool,
     ignore_na: bool,
-    deltas: np.ndarray,
+    deltas: tuple,
     normalize: bool,
 ):
     """
@@ -96,29 +92,28 @@ def generate_numba_ewm_func(
 
     Parameters
     ----------
-    engine_kwargs : dict
-        dictionary of arguments to be passed into numba.jit
+    nopython : bool
+        nopython to be passed into numba.jit
+    nogil : bool
+        nogil to be passed into numba.jit
+    parallel : bool
+        parallel to be passed into numba.jit
     com : float
     adjust : bool
     ignore_na : bool
-    deltas : numpy.ndarray
+    deltas : tuple
     normalize : bool
 
     Returns
     -------
     Numba function
     """
-    nopython, nogil, parallel = get_jit_arguments(engine_kwargs)
+    if TYPE_CHECKING:
+        import numba
+    else:
+        numba = import_optional_dependency("numba")
 
-    str_key = "ewm_mean" if normalize else "ewm_sum"
-    cache_key = (lambda x: x, str_key)
-    if cache_key in NUMBA_FUNC_CACHE:
-        return NUMBA_FUNC_CACHE[cache_key]
-
-    numba = import_optional_dependency("numba")
-
-    # error: Untyped decorator makes function "ewma" untyped
-    @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)  # type: ignore[misc]
+    @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)
     def ewm(
         values: np.ndarray,
         begin: np.ndarray,
@@ -179,11 +174,12 @@ def generate_numba_ewm_func(
     return ewm
 
 
+@functools.lru_cache(maxsize=None)
 def generate_numba_table_func(
-    kwargs: dict[str, Any],
     func: Callable[..., np.ndarray],
-    engine_kwargs: dict[str, bool] | None,
-    name: str,
+    nopython: bool,
+    nogil: bool,
+    parallel: bool,
 ):
     """
     Generate a numba jitted function to apply window calculations table-wise.
@@ -197,30 +193,26 @@ def generate_numba_table_func(
 
     Parameters
     ----------
-    kwargs : dict
-        **kwargs to be passed into the function
     func : function
         function to be applied to each window and will be JITed
-    engine_kwargs : dict
-        dictionary of arguments to be passed into numba.jit
-    name : str
-        caller (Rolling/Expanding) and original method name for numba cache key
+    nopython : bool
+        nopython to be passed into numba.jit
+    nogil : bool
+        nogil to be passed into numba.jit
+    parallel : bool
+        parallel to be passed into numba.jit
 
     Returns
     -------
     Numba function
     """
-    nopython, nogil, parallel = get_jit_arguments(engine_kwargs, kwargs)
-
-    cache_key = (func, f"{name}_table")
-    if cache_key in NUMBA_FUNC_CACHE:
-        return NUMBA_FUNC_CACHE[cache_key]
-
     numba_func = jit_user_function(func, nopython, nogil, parallel)
-    numba = import_optional_dependency("numba")
+    if TYPE_CHECKING:
+        import numba
+    else:
+        numba = import_optional_dependency("numba")
 
-    # error: Untyped decorator makes function "roll_table" untyped
-    @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)  # type: ignore[misc]
+    @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)
     def roll_table(
         values: np.ndarray,
         begin: np.ndarray,
@@ -228,8 +220,8 @@ def generate_numba_table_func(
         minimum_periods: int,
         *args: Any,
     ):
-        result = np.empty(values.shape)
-        min_periods_mask = np.empty(values.shape)
+        result = np.empty((len(begin), values.shape[1]))
+        min_periods_mask = np.empty(result.shape)
         for i in numba.prange(len(result)):
             start = begin[i]
             stop = end[i]
@@ -250,7 +242,10 @@ def generate_numba_table_func(
 # https://github.com/numba/numba/issues/1269
 @functools.lru_cache(maxsize=None)
 def generate_manual_numpy_nan_agg_with_axis(nan_func):
-    numba = import_optional_dependency("numba")
+    if TYPE_CHECKING:
+        import numba
+    else:
+        numba = import_optional_dependency("numba")
 
     @numba.jit(nopython=True, nogil=True, parallel=True)
     def nan_agg_with_axis(table):
@@ -263,12 +258,15 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):
     return nan_agg_with_axis
 
 
+@functools.lru_cache(maxsize=None)
 def generate_numba_ewm_table_func(
-    engine_kwargs: dict[str, bool] | None,
+    nopython: bool,
+    nogil: bool,
+    parallel: bool,
     com: float,
     adjust: bool,
     ignore_na: bool,
-    deltas: np.ndarray,
+    deltas: tuple,
     normalize: bool,
 ):
     """
@@ -277,29 +275,28 @@ def generate_numba_ewm_table_func(
 
     Parameters
     ----------
-    engine_kwargs : dict
-        dictionary of arguments to be passed into numba.jit
+    nopython : bool
+        nopython to be passed into numba.jit
+    nogil : bool
+        nogil to be passed into numba.jit
+    parallel : bool
+        parallel to be passed into numba.jit
     com : float
     adjust : bool
     ignore_na : bool
-    deltas : numpy.ndarray
+    deltas : tuple
     normalize: bool
 
     Returns
     -------
     Numba function
     """
-    nopython, nogil, parallel = get_jit_arguments(engine_kwargs)
+    if TYPE_CHECKING:
+        import numba
+    else:
+        numba = import_optional_dependency("numba")
 
-    str_key = "ewm_mean_table" if normalize else "ewm_sum_table"
-    cache_key = (lambda x: x, str_key)
-    if cache_key in NUMBA_FUNC_CACHE:
-        return NUMBA_FUNC_CACHE[cache_key]
-
-    numba = import_optional_dependency("numba")
-
-    # error: Untyped decorator makes function "ewm_table" untyped
-    @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)  # type: ignore[misc]
+    @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)
     def ewm_table(
         values: np.ndarray,
         begin: np.ndarray,

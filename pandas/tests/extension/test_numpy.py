@@ -12,6 +12,8 @@ Additional tests should either be added to one of the BaseExtensionTests
 classes (if they are relevant for the extension interface for all dtypes), or
 be added to the array-specific tests in `pandas/tests/arrays/`.
 
+Note: we do not bother with base.BaseIndexTests because PandasArray
+will never be held in an Index.
 """
 import numpy as np
 import pytest
@@ -206,10 +208,15 @@ class TestConstructors(BaseNumPyTests, base.BaseConstructorsTests):
 
 
 class TestDtype(BaseNumPyTests, base.BaseDtypeTests):
-    @pytest.mark.skip(reason="Incorrect expected.")
-    # we unsurprisingly clash with a NumPy name.
-    def test_check_dtype(self, data):
-        pass
+    def test_check_dtype(self, data, request):
+        if data.dtype.numpy_dtype == "object":
+            request.node.add_marker(
+                pytest.mark.xfail(
+                    reason=f"PandasArray expectedly clashes with a "
+                    f"NumPy name: {data.dtype.numpy_dtype}"
+                )
+            )
+        super().test_check_dtype(data)
 
 
 class TestGetitem(BaseNumPyTests, base.BaseGetitemTests):
@@ -220,16 +227,7 @@ class TestGetitem(BaseNumPyTests, base.BaseGetitemTests):
 
 
 class TestGroupby(BaseNumPyTests, base.BaseGroupbyTests):
-    def test_groupby_extension_apply(
-        self, data_for_grouping, groupby_apply_op, request
-    ):
-        dummy = groupby_apply_op([None])
-        if (
-            isinstance(dummy, pd.Series)
-            and data_for_grouping.dtype.numpy_dtype == object
-        ):
-            mark = pytest.mark.xfail(reason="raises in MultiIndex construction")
-            request.node.add_marker(mark)
+    def test_groupby_extension_apply(self, data_for_grouping, groupby_apply_op):
         super().test_groupby_extension_apply(data_for_grouping, groupby_apply_op)
 
 
@@ -343,11 +341,6 @@ class TestMissing(BaseNumPyTests, base.BaseMissingTests):
 
 
 class TestReshaping(BaseNumPyTests, base.BaseReshapingTests):
-    @pytest.mark.skip(reason="Incorrect expected.")
-    def test_merge(self, data, na_value):
-        # Fails creating expected (key column becomes a PandasDtype because)
-        super().test_merge(data, na_value)
-
     @pytest.mark.parametrize(
         "in_frame",
         [
@@ -457,5 +450,5 @@ class TestParsing(BaseNumPyTests, base.BaseParsingTests):
     pass
 
 
-class Test2DCompat(BaseNumPyTests, base.Dim2CompatTests):
+class Test2DCompat(BaseNumPyTests, base.NDArrayBacked2DTests):
     pass

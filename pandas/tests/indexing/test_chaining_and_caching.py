@@ -3,6 +3,7 @@ from string import ascii_letters as letters
 import numpy as np
 import pytest
 
+from pandas.errors import SettingWithCopyError
 import pandas.util._test_decorators as td
 
 import pandas as pd
@@ -20,14 +21,12 @@ msg = "A value is trying to be set on a copy of a slice from a DataFrame"
 
 
 def random_text(nobs=100):
-    df = []
-    for i in range(nobs):
-        idx = np.random.randint(len(letters), size=2)
-        idx.sort()
+    # Construct a DataFrame where each row is a random slice from 'letters'
+    idxs = np.random.randint(len(letters), size=(nobs, 2))
+    idxs.sort(axis=1)
+    strings = [letters[x[0] : x[1]] for x in idxs]
 
-        df.append([letters[idx[0] : idx[1]]])
-
-    return DataFrame(df, columns=["letters"])
+    return DataFrame(strings, columns=["letters"])
 
 
 class TestCaching:
@@ -159,16 +158,17 @@ class TestChaining:
     @pytest.mark.arm_slow
     def test_detect_chained_assignment(self):
 
-        pd.set_option("chained_assignment", "raise")
+        with option_context("chained_assignment", "raise"):
+            # work with the chain
+            expected = DataFrame([[-5, 1], [-6, 3]], columns=list("AB"))
+            df = DataFrame(
+                np.arange(4).reshape(2, 2), columns=list("AB"), dtype="int64"
+            )
+            assert df._is_copy is None
 
-        # work with the chain
-        expected = DataFrame([[-5, 1], [-6, 3]], columns=list("AB"))
-        df = DataFrame(np.arange(4).reshape(2, 2), columns=list("AB"), dtype="int64")
-        assert df._is_copy is None
-
-        df["A"][0] = -5
-        df["A"][1] = -6
-        tm.assert_frame_equal(df, expected)
+            df["A"][0] = -5
+            df["A"][1] = -6
+            tm.assert_frame_equal(df, expected)
 
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_raises(self, using_array_manager):
@@ -183,10 +183,10 @@ class TestChaining:
         assert df._is_copy is None
 
         if not using_array_manager:
-            with pytest.raises(com.SettingWithCopyError, match=msg):
+            with pytest.raises(SettingWithCopyError, match=msg):
                 df["A"][0] = -5
 
-            with pytest.raises(com.SettingWithCopyError, match=msg):
+            with pytest.raises(SettingWithCopyError, match=msg):
                 df["A"][1] = np.nan
 
             assert df["A"]._is_copy is None
@@ -211,7 +211,7 @@ class TestChaining:
             }
         )
 
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             df.loc[0]["A"] = -5
 
     @pytest.mark.arm_slow
@@ -226,7 +226,7 @@ class TestChaining:
         )
         assert df._is_copy is None
 
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             indexer = df.a.str.startswith("o")
             df[indexer]["c"] = 42
 
@@ -236,11 +236,11 @@ class TestChaining:
         expected = DataFrame({"A": [111, "bbb", "ccc"], "B": [1, 2, 3]})
         df = DataFrame({"A": ["aaa", "bbb", "ccc"], "B": [1, 2, 3]})
 
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             df.loc[0]["A"] = 111
 
         if not using_array_manager:
-            with pytest.raises(com.SettingWithCopyError, match=msg):
+            with pytest.raises(SettingWithCopyError, match=msg):
                 df["A"][0] = 111
 
             df.loc[0, "A"] = 111
@@ -361,7 +361,7 @@ class TestChaining:
         df = DataFrame(np.arange(0, 9), columns=["count"])
         df["group"] = "b"
 
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             df.iloc[0:5]["group"] = "a"
 
     @pytest.mark.arm_slow
@@ -377,14 +377,14 @@ class TestChaining:
             }
         )
 
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             df.loc[2]["D"] = "foo"
 
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             df.loc[2]["C"] = "foo"
 
         if not using_array_manager:
-            with pytest.raises(com.SettingWithCopyError, match=msg):
+            with pytest.raises(SettingWithCopyError, match=msg):
                 df["C"][2] = "foo"
         else:
             # INFO(ArrayManager) for ArrayManager it doesn't matter if it's
@@ -400,7 +400,7 @@ class TestChaining:
         )
         mask = pd.isna(df.c)
 
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             df[["c"]][mask] = df[["b"]][mask]
 
     def test_setting_with_copy_bug_no_warning(self):
@@ -419,7 +419,7 @@ class TestChaining:
                 df.loc[0]["A"] = 111
 
         with option_context("chained_assignment", "raise"):
-            with pytest.raises(com.SettingWithCopyError, match=msg):
+            with pytest.raises(SettingWithCopyError, match=msg):
                 df.loc[0]["A"] = 111
 
     def test_detect_chained_assignment_warnings_filter_and_dupe_cols(self):
@@ -504,8 +504,8 @@ class TestChaining:
 
             df["bb"].iloc[0] = 0.13
 
-            # TODO: unused
-            df_tmp = df.iloc[ck]  # noqa
+            # GH#3970 this lookup used to break the chained setting to 0.15
+            df.iloc[ck]
 
             df["bb"].iloc[0] = 0.15
             assert df["bb"].iloc[0] == 0.15

@@ -8,7 +8,7 @@ from functools import partial
 import numpy as np
 import pytest
 
-import pandas.util._test_decorators as td
+from pandas.errors import SpecificationError
 
 import pandas as pd
 from pandas import (
@@ -21,7 +21,6 @@ from pandas import (
     period_range,
 )
 import pandas._testing as tm
-from pandas.core.base import SpecificationError
 
 from pandas.io.formats.printing import pprint_thing
 
@@ -424,7 +423,6 @@ def test_agg_callables():
         tm.assert_frame_equal(result, expected)
 
 
-@td.skip_array_manager_not_yet_implemented  # TODO(ArrayManager) columns with ndarrays
 def test_agg_over_numpy_arrays():
     # GH 3788
     df = DataFrame(

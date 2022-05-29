@@ -11,6 +11,7 @@ from typing import (
     final,
     no_type_check,
 )
+import warnings
 
 import numpy as np
 
@@ -33,13 +34,17 @@ from pandas._typing import (
     npt,
 )
 from pandas.compat.numpy import function as nv
-from pandas.errors import AbstractMethodError
+from pandas.errors import (
+    AbstractMethodError,
+    DataError,
+)
 from pandas.util._decorators import (
     Appender,
     Substitution,
     deprecate_nonkeyword_arguments,
     doc,
 )
+from pandas.util._exceptions import find_stack_level
 
 from pandas.core.dtypes.generic import (
     ABCDataFrame,
@@ -48,10 +53,7 @@ from pandas.core.dtypes.generic import (
 
 import pandas.core.algorithms as algos
 from pandas.core.apply import ResamplerWindowApply
-from pandas.core.base import (
-    DataError,
-    PandasObject,
-)
+from pandas.core.base import PandasObject
 import pandas.core.common as com
 from pandas.core.generic import (
     NDFrame,
@@ -147,21 +149,26 @@ class Resampler(BaseGroupBy, PandasObject):
         axis: int = 0,
         kind=None,
         *,
+        group_keys: bool | lib.NoDefault = lib.no_default,
         selection=None,
         **kwargs,
-    ):
+    ) -> None:
         self.groupby = groupby
         self.keys = None
         self.sort = True
         self.axis = axis
         self.kind = kind
         self.squeeze = False
-        self.group_keys = True
+        self.group_keys = group_keys
         self.as_index = True
 
         self.groupby._set_grouper(self._convert_obj(obj), sort=True)
         self.binner, self.grouper = self._get_binner()
         self._selection = selection
+        if self.groupby.key is not None:
+            self.exclusions = frozenset([self.groupby.key])
+        else:
+            self.exclusions = frozenset()
 
     @final
     def _shallow_copy(self, obj, **kwargs):
@@ -407,7 +414,9 @@ class Resampler(BaseGroupBy, PandasObject):
         grouper = self.grouper
         if subset is None:
             subset = self.obj
-        grouped = get_groupby(subset, by=None, grouper=grouper, axis=self.axis)
+        grouped = get_groupby(
+            subset, by=None, grouper=grouper, axis=self.axis, group_keys=self.group_keys
+        )
 
         # try the key selection
         try:
@@ -421,9 +430,14 @@ class Resampler(BaseGroupBy, PandasObject):
         """
         grouper = self.grouper
 
-        obj = self._selected_obj
-
-        grouped = get_groupby(obj, by=None, grouper=grouper, axis=self.axis)
+        if self._selected_obj.ndim == 1:
+            obj = self._selected_obj
+        else:
+            # Excludes `on` column when provided
+            obj = self._obj_with_exclusions
+        grouped = get_groupby(
+            obj, by=None, grouper=grouper, axis=self.axis, group_keys=self.group_keys
+        )
 
         try:
             if isinstance(obj, ABCDataFrame) and callable(how):
@@ -509,7 +523,7 @@ class Resampler(BaseGroupBy, PandasObject):
 
         return result
 
-    def pad(self, limit=None):
+    def ffill(self, limit=None):
         """
         Forward fill the values.
 
@@ -527,9 +541,18 @@ class Resampler(BaseGroupBy, PandasObject):
         Series.fillna: Fill NA/NaN values using the specified method.
         DataFrame.fillna: Fill NA/NaN values using the specified method.
         """
-        return self._upsample("pad", limit=limit)
+        return self._upsample("ffill", limit=limit)
 
-    ffill = pad
+    def pad(self, limit=None):
+        warnings.warn(
+            "pad is deprecated and will be removed in a future version. "
+            "Use ffill instead.",
+            FutureWarning,
+            stacklevel=find_stack_level(),
+        )
+        return self.ffill(limit=limit)
+
+    pad.__doc__ = ffill.__doc__
 
     def nearest(self, limit=None):
         """
@@ -591,7 +614,7 @@ class Resampler(BaseGroupBy, PandasObject):
         """
         return self._upsample("nearest", limit=limit)
 
-    def backfill(self, limit=None):
+    def bfill(self, limit=None):
         """
         Backward fill the new missing values in the resampled data.
 
@@ -618,7 +641,7 @@ class Resampler(BaseGroupBy, PandasObject):
         fillna : Fill NaN values using the specified method, which can be
             'backfill'.
         nearest : Fill NaN values with nearest neighbor starting from center.
-        pad : Forward fill NaN values.
+        ffill : Forward fill NaN values.
         Series.fillna : Fill NaN values in the Series using the
             specified method, which can be 'backfill'.
         DataFrame.fillna : Fill NaN values in the DataFrame using the
@@ -640,7 +663,7 @@ class Resampler(BaseGroupBy, PandasObject):
         2018-01-01 02:00:00    3
         Freq: H, dtype: int64
 
-        >>> s.resample('30min').backfill()
+        >>> s.resample('30min').bfill()
         2018-01-01 00:00:00    1
         2018-01-01 00:30:00    2
         2018-01-01 01:00:00    2
@@ -648,7 +671,7 @@ class Resampler(BaseGroupBy, PandasObject):
         2018-01-01 02:00:00    3
         Freq: 30T, dtype: int64
 
-        >>> s.resample('15min').backfill(limit=2)
+        >>> s.resample('15min').bfill(limit=2)
         2018-01-01 00:00:00    1.0
         2018-01-01 00:15:00    NaN
         2018-01-01 00:30:00    2.0
@@ -671,7 +694,7 @@ class Resampler(BaseGroupBy, PandasObject):
         2018-01-01 01:00:00  NaN  3
         2018-01-01 02:00:00  6.0  5
 
-        >>> df.resample('30min').backfill()
+        >>> df.resample('30min').bfill()
                                a  b
         2018-01-01 00:00:00  2.0  1
         2018-01-01 00:30:00  NaN  3
@@ -679,7 +702,7 @@ class Resampler(BaseGroupBy, PandasObject):
         2018-01-01 01:30:00  6.0  5
         2018-01-01 02:00:00  6.0  5
 
-        >>> df.resample('15min').backfill(limit=2)
+        >>> df.resample('15min').bfill(limit=2)
                                a    b
         2018-01-01 00:00:00  2.0  1.0
         2018-01-01 00:15:00  NaN  NaN
@@ -691,9 +714,18 @@ class Resampler(BaseGroupBy, PandasObject):
         2018-01-01 01:45:00  6.0  5.0
         2018-01-01 02:00:00  6.0  5.0
         """
-        return self._upsample("backfill", limit=limit)
+        return self._upsample("bfill", limit=limit)
 
-    bfill = backfill
+    def backfill(self, limit=None):
+        warnings.warn(
+            "backfill is deprecated and will be removed in a future version. "
+            "Use bfill instead.",
+            FutureWarning,
+            stacklevel=find_stack_level(),
+        )
+        return self.bfill(limit=limit)
+
+    backfill.__doc__ = bfill.__doc__
 
     def fillna(self, method, limit=None):
         """
@@ -727,8 +759,8 @@ class Resampler(BaseGroupBy, PandasObject):
 
         See Also
         --------
-        backfill : Backward fill NaN values in the resampled data.
-        pad : Forward fill NaN values in the resampled data.
+        bfill : Backward fill NaN values in the resampled data.
+        ffill : Forward fill NaN values in the resampled data.
         nearest : Fill NaN values in the resampled data
             with nearest neighbor starting from center.
         interpolate : Fill NaN values using interpolation.
@@ -1003,9 +1035,21 @@ class Resampler(BaseGroupBy, PandasObject):
 # downsample methods
 for method in ["sum", "prod", "min", "max", "first", "last"]:
 
-    def f(self, _method=method, min_count=0, *args, **kwargs):
+    def f(
+        self,
+        _method: str = method,
+        numeric_only: bool | lib.NoDefault = lib.no_default,
+        min_count: int = 0,
+        *args,
+        **kwargs,
+    ):
+        if numeric_only is lib.no_default:
+            if _method != "sum":
+                # For DataFrameGroupBy, set it to be False for methods other than `sum`.
+                numeric_only = False
+
         nv.validate_resampler_func(_method, args, kwargs)
-        return self._downsample(_method, min_count=min_count)
+        return self._downsample(_method, numeric_only=numeric_only, min_count=min_count)
 
     f.__doc__ = getattr(GroupBy, method).__doc__
     setattr(Resampler, method, f)
@@ -1040,7 +1084,7 @@ class _GroupByMixin(PandasObject):
     _attributes: list[str]  # in practice the same as Resampler._attributes
     _selection: IndexLabel | None = None
 
-    def __init__(self, obj, parent=None, groupby=None, **kwargs):
+    def __init__(self, obj, parent=None, groupby=None, **kwargs) -> None:
         # reached via ._gotitem and _get_resampler_for_grouping
 
         if parent is None:
@@ -1144,7 +1188,11 @@ class DatetimeIndexResampler(Resampler):
         """
         how = com.get_cython_func(how) or how
         ax = self.ax
-        obj = self._selected_obj
+        if self._selected_obj.ndim == 1:
+            obj = self._selected_obj
+        else:
+            # Excludes `on` column when provided
+            obj = self._obj_with_exclusions
 
         if not len(ax):
             # reset to the new freq
@@ -1446,19 +1494,20 @@ class TimeGrouper(Grouper):
         self,
         freq="Min",
         closed: Literal["left", "right"] | None = None,
-        label: str | None = None,
+        label: Literal["left", "right"] | None = None,
         how="mean",
         axis=0,
         fill_method=None,
         limit=None,
         loffset=None,
         kind: str | None = None,
-        convention: str | None = None,
+        convention: Literal["start", "end", "e", "s"] | None = None,
         base: int | None = None,
         origin: str | TimestampConvertibleTypes = "start_day",
         offset: TimedeltaConvertibleTypes | None = None,
+        group_keys: bool | lib.NoDefault = True,
         **kwargs,
-    ):
+    ) -> None:
         # Check for correctness of the keyword arguments which would
         # otherwise silently use the default if misspelled
         if label not in {None, "left", "right"}:
@@ -1498,13 +1547,11 @@ class TimeGrouper(Grouper):
         self.closed = closed
         self.label = label
         self.kind = kind
-
-        self.convention = convention or "E"
-        self.convention = self.convention.lower()
-
+        self.convention = convention if convention is not None else "e"
         self.how = how
         self.fill_method = fill_method
         self.limit = limit
+        self.group_keys = group_keys
 
         if origin in ("epoch", "start", "start_day", "end", "end_day"):
             self.origin = origin
@@ -1570,11 +1617,17 @@ class TimeGrouper(Grouper):
 
         ax = self.ax
         if isinstance(ax, DatetimeIndex):
-            return DatetimeIndexResampler(obj, groupby=self, kind=kind, axis=self.axis)
+            return DatetimeIndexResampler(
+                obj, groupby=self, kind=kind, axis=self.axis, group_keys=self.group_keys
+            )
         elif isinstance(ax, PeriodIndex) or kind == "period":
-            return PeriodIndexResampler(obj, groupby=self, kind=kind, axis=self.axis)
+            return PeriodIndexResampler(
+                obj, groupby=self, kind=kind, axis=self.axis, group_keys=self.group_keys
+            )
         elif isinstance(ax, TimedeltaIndex):
-            return TimedeltaIndexResampler(obj, groupby=self, axis=self.axis)
+            return TimedeltaIndexResampler(
+                obj, groupby=self, axis=self.axis, group_keys=self.group_keys
+            )
 
         raise TypeError(
             "Only valid with DatetimeIndex, "
@@ -1682,12 +1735,19 @@ class TimeGrouper(Grouper):
             return binner, [], labels
 
         start, end = ax.min(), ax.max()
+
+        if self.closed == "right":
+            end += self.freq
+
         labels = binner = timedelta_range(
             start=start, end=end, freq=self.freq, name=ax.name
         )
 
-        end_stamps = labels + self.freq
-        bins = ax.searchsorted(end_stamps, side="left")
+        end_stamps = labels
+        if self.closed == "left":
+            end_stamps += self.freq
+
+        bins = ax.searchsorted(end_stamps, side=self.closed)
 
         if self.offset:
             # GH 10530 & 31809
@@ -2012,30 +2072,30 @@ def _adjust_dates_anchored(
     if closed == "right":
         if foffset > 0:
             # roll back
-            fresult = first.value - foffset
+            fresult_int = first.value - foffset
         else:
-            fresult = first.value - freq.nanos
+            fresult_int = first.value - freq.nanos
 
         if loffset > 0:
             # roll forward
-            lresult = last.value + (freq.nanos - loffset)
+            lresult_int = last.value + (freq.nanos - loffset)
         else:
             # already the end of the road
-            lresult = last.value
+            lresult_int = last.value
     else:  # closed == 'left'
         if foffset > 0:
-            fresult = first.value - foffset
+            fresult_int = first.value - foffset
         else:
             # start of the road
-            fresult = first.value
+            fresult_int = first.value
 
         if loffset > 0:
             # roll forward
-            lresult = last.value + (freq.nanos - loffset)
+            lresult_int = last.value + (freq.nanos - loffset)
         else:
-            lresult = last.value + freq.nanos
-    fresult = Timestamp(fresult)
-    lresult = Timestamp(lresult)
+            lresult_int = last.value + freq.nanos
+    fresult = Timestamp(fresult_int)
+    lresult = Timestamp(lresult_int)
     if first_tzinfo is not None:
         fresult = fresult.tz_localize("UTC").tz_convert(first_tzinfo)
     if last_tzinfo is not None:

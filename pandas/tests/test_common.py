@@ -5,6 +5,11 @@ import string
 import numpy as np
 import pytest
 
+from pandas.compat import (
+    IS64,
+    is_ci_environment,
+)
+
 import pandas as pd
 from pandas import Series
 import pandas._testing as tm
@@ -25,7 +30,9 @@ def test_get_callable_name():
 
     class somecall:
         def __call__(self):
-            return x  # noqa
+            # This shouldn't actually get called below; somecall.__init__
+            #  should.
+            raise NotImplementedError
 
     assert getname(fn) == "fn"
     assert getname(lambda_)
@@ -62,7 +69,7 @@ def test_random_state():
 
     # check array-like
     # GH32503
-    state_arr_like = npr.randint(0, 2 ** 31, size=624, dtype="uint32")
+    state_arr_like = npr.randint(0, 2**31, size=624, dtype="uint32")
     assert (
         com.random_state(state_arr_like).uniform()
         == npr.RandomState(state_arr_like).uniform()
@@ -155,6 +162,9 @@ def test_standardize_mapping():
     assert isinstance(com.standardize_mapping(dd), partial)
 
 
+@pytest.mark.xfail(
+    is_ci_environment() and not IS64, reason="Failing on 32 bit Python CI job"
+)
 def test_git_version():
     # GH 21295
     git_version = pd.__git_version__
@@ -211,3 +221,19 @@ class TestIsBoolIndexer:
         result = df[frozen]
         expected = df[[]]
         tm.assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize("with_exception", [True, False])
+def test_temp_setattr(with_exception):
+    # GH#45954
+    ser = Series(dtype=object)
+    ser.name = "first"
+    # Raise a ValueError in either case to satisfy pytest.raises
+    match = "Inside exception raised" if with_exception else "Outside exception raised"
+    with pytest.raises(ValueError, match=match):
+        with com.temp_setattr(ser, "name", "second"):
+            assert ser.name == "second"
+            if with_exception:
+                raise ValueError("Inside exception raised")
+        raise ValueError("Outside exception raised")
+    assert ser.name == "first"

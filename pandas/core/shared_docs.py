@@ -94,12 +94,15 @@ by : mapping, function, label, or list of labels
     If ``by`` is a function, it's called on each value of the object's
     index. If a dict or Series is passed, the Series or dict VALUES
     will be used to determine the groups (the Series' values are first
-    aligned; see ``.align()`` method). If an ndarray is passed, the
-    values are used as-is to determine the groups. A label or list of
-    labels may be passed to group by the columns in ``self``. Notice
-    that a tuple is interpreted as a (single) key.
+    aligned; see ``.align()`` method). If a list or ndarray of length
+    equal to the selected axis is passed (see the `groupby user guide
+    <https://pandas.pydata.org/pandas-docs/stable/user_guide/groupby.html#splitting-an-object-into-groups>`_),
+    the values are used as-is to determine the groups. A label or list
+    of labels may be passed to group by the columns in ``self``.
+    Notice that a tuple is interpreted as a (single) key.
 axis : {0 or 'index', 1 or 'columns'}, default 0
-    Split along rows (0) or columns (1).
+    Split along rows (0) or columns (1). For `Series` this parameter
+    is unused and defaults to 0.
 level : int, level name, or sequence of such, default None
     If the axis is a MultiIndex (hierarchical), group by a particular
     level or levels.
@@ -111,8 +114,17 @@ sort : bool, default True
     Sort group keys. Get better performance by turning this off.
     Note this does not influence the order of observations within each
     group. Groupby preserves the order of rows within each group.
-group_keys : bool, default True
+group_keys : bool, optional
     When calling apply, add group keys to index to identify pieces.
+    By default group keys are not included when the result's index
+    (and column) labels match the inputs, and are included otherwise.
+
+    .. versionchanged:: 1.5.0
+
+       Warns that `group_keys` will no longer be ignored when the
+       result from ``apply`` is a like-indexed Series or DataFrame.
+       Specify ``group_keys`` explicitly to include the group keys or
+       not.
 squeeze : bool, default False
     Reduce the dimensionality of the return type if possible,
     otherwise return a consistent type.
@@ -126,7 +138,7 @@ observed : bool, default False
 dropna : bool, default True
     If True, and if group keys contain NA values, NA values together
     with row/column will be dropped.
-    If False, NA values will also be treated as the key in groups
+    If False, NA values will also be treated as the key in groups.
 
     .. versionadded:: 1.1.0
 
@@ -143,7 +155,9 @@ resample : Convenience method for frequency conversion and resampling
 Notes
 -----
 See the `user guide
-<https://pandas.pydata.org/pandas-docs/stable/groupby.html>`__ for more.
+<https://pandas.pydata.org/pandas-docs/stable/groupby.html>`__ for more
+detailed usage and examples, including splitting an object into groups,
+iterating through groups, selecting a group, aggregation, and more.
 """
 
 _shared_docs[
@@ -190,6 +204,10 @@ DataFrame.pivot : Return reshaped DataFrame organized
     by given index / column values.
 DataFrame.explode : Explode a DataFrame from list-like
         columns to long format.
+
+Notes
+-----
+Reference :ref:`the user guide <reshaping.melt>` for more examples.
 
 Examples
 --------
@@ -263,9 +281,7 @@ If you have multi-index columns:
 _shared_docs[
     "transform"
 ] = """
-Call ``func`` on self producing a {klass} with transformed values.
-
-Produced {klass} will have same axis length as self.
+Call ``func`` on self producing a {klass} with the same axis shape as self.
 
 Parameters
 ----------
@@ -394,9 +410,55 @@ _shared_docs[
 ] = """storage_options : dict, optional
     Extra options that make sense for a particular storage connection, e.g.
     host, port, username, password, etc. For HTTP(S) URLs the key-value pairs
-    are forwarded to ``urllib`` as header options. For other URLs (e.g.
-    starting with "s3://", and "gcs://") the key-value pairs are forwarded to
-    ``fsspec``. Please see ``fsspec`` and ``urllib`` for more details."""
+    are forwarded to ``urllib.request.Request`` as header options. For other
+    URLs (e.g. starting with "s3://", and "gcs://") the key-value pairs are
+    forwarded to ``fsspec.open``. Please see ``fsspec`` and ``urllib`` for more
+    details, and for more examples on storage options refer `here
+    <https://pandas.pydata.org/docs/user_guide/io.html?
+    highlight=storage_options#reading-writing-remote-files>`_."""
+
+_shared_docs[
+    "compression_options"
+] = """compression : str or dict, default 'infer'
+    For on-the-fly compression of the output data. If 'infer' and '%s'
+    path-like, then detect compression from the following extensions: '.gz',
+    '.bz2', '.zip', '.xz', '.zst', '.tar', '.tar.gz', '.tar.xz' or '.tar.bz2'
+    (otherwise no compression).
+    Set to ``None`` for no compression.
+    Can also be a dict with key ``'method'`` set
+    to one of {``'zip'``, ``'gzip'``, ``'bz2'``, ``'zstd'``, ``'tar'``} and other
+    key-value pairs are forwarded to
+    ``zipfile.ZipFile``, ``gzip.GzipFile``,
+    ``bz2.BZ2File``, ``zstandard.ZstdDecompressor`` or
+    ``tarfile.TarFile``, respectively.
+    As an example, the following could be passed for faster compression and to create
+    a reproducible gzip archive:
+    ``compression={'method': 'gzip', 'compresslevel': 1, 'mtime': 1}``.
+
+        .. versionadded:: 1.5.0
+            Added support for `.tar` files."""
+
+_shared_docs[
+    "decompression_options"
+] = """compression : str or dict, default 'infer'
+    For on-the-fly decompression of on-disk data. If 'infer' and '%s' is
+    path-like, then detect compression from the following extensions: '.gz',
+    '.bz2', '.zip', '.xz', '.zst', '.tar', '.tar.gz', '.tar.xz' or '.tar.bz2'
+    (otherwise no compression).
+    If using 'zip' or 'tar', the ZIP file must contain only one data file to be read in.
+    Set to ``None`` for no decompression.
+    Can also be a dict with key ``'method'`` set
+    to one of {``'zip'``, ``'gzip'``, ``'bz2'``, ``'zstd'``, ``'tar'``} and other
+    key-value pairs are forwarded to
+    ``zipfile.ZipFile``, ``gzip.GzipFile``,
+    ``bz2.BZ2File``, ``zstandard.ZstdDecompressor`` or
+    ``tarfile.TarFile``, respectively.
+    As an example, the following could be passed for Zstandard decompression using a
+    custom compression dictionary:
+    ``compression={'method': 'zstd', 'dict_data': my_compression_dict}``.
+
+        .. versionadded:: 1.5.0
+            Added support for `.tar` files."""
 
 _shared_docs[
     "replace"
@@ -435,8 +497,8 @@ _shared_docs[
             - Dicts can be used to specify different replacement values
               for different existing values. For example,
               ``{{'a': 'b', 'y': 'z'}}`` replaces the value 'a' with 'b' and
-              'y' with 'z'. To use a dict in this way the `value`
-              parameter should be `None`.
+              'y' with 'z'. To use a dict in this way, the optional `value`
+              parameter should not be given.
             - For a DataFrame a dict can specify that different values
               should be replaced in different columns. For example,
               ``{{'a': 1, 'b': 'z'}}`` looks for the value 1 in column 'a'
@@ -447,8 +509,8 @@ _shared_docs[
               specifying the column to search in.
             - For a DataFrame nested dictionaries, e.g.,
               ``{{'a': {{'b': np.nan}}}}``, are read as follows: look in column
-              'a' for the value 'b' and replace it with NaN. The `value`
-              parameter should be ``None`` to use a nested dict in this
+              'a' for the value 'b' and replace it with NaN. The optional `value`
+              parameter should not be specified to use a nested dict in this
               way. You can nest regular expressions as well. Note that
               column names (the top-level dictionary keys in a nested
               dictionary) **cannot** be regular expressions.
@@ -660,18 +722,164 @@ _shared_docs[
     4    None
     dtype: object
 
-    When ``value=None`` and `to_replace` is a scalar, list or
-    tuple, `replace` uses the method parameter (default 'pad') to do the
+    When ``value`` is not explicitly passed and `to_replace` is a scalar, list
+    or tuple, `replace` uses the method parameter (default 'pad') to do the
     replacement. So this is why the 'a' values are being replaced by 10
     in rows 1 and 2 and 'b' in row 4 in this case.
-    The command ``s.replace('a', None)`` is actually equivalent to
-    ``s.replace(to_replace='a', value=None, method='pad')``:
 
-    >>> s.replace('a', None)
+    >>> s.replace('a')
     0    10
     1    10
     2    10
     3     b
     4     b
+    dtype: object
+
+    On the other hand, if ``None`` is explicitly passed for ``value``, it will
+    be respected:
+
+    >>> s.replace('a', None)
+    0      10
+    1    None
+    2    None
+    3       b
+    4    None
+    dtype: object
+
+        .. versionchanged:: 1.4.0
+            Previously the explicit ``None`` was silently ignored.
+"""
+
+_shared_docs[
+    "idxmin"
+] = """
+    Return index of first occurrence of minimum over requested axis.
+
+    NA/null values are excluded.
+
+    Parameters
+    ----------
+    axis : {{0 or 'index', 1 or 'columns'}}, default 0
+        The axis to use. 0 or 'index' for row-wise, 1 or 'columns' for column-wise.
+    skipna : bool, default True
+        Exclude NA/null values. If an entire row/column is NA, the result
+        will be NA.
+    numeric_only : bool, default {numeric_only_default}
+        Include only `float`, `int` or `boolean` data.
+
+        .. versionadded:: 1.5.0
+
+    Returns
+    -------
+    Series
+        Indexes of minima along the specified axis.
+
+    Raises
+    ------
+    ValueError
+        * If the row/column is empty
+
+    See Also
+    --------
+    Series.idxmin : Return index of the minimum element.
+
+    Notes
+    -----
+    This method is the DataFrame version of ``ndarray.argmin``.
+
+    Examples
+    --------
+    Consider a dataset containing food consumption in Argentina.
+
+    >>> df = pd.DataFrame({{'consumption': [10.51, 103.11, 55.48],
+    ...                    'co2_emissions': [37.2, 19.66, 1712]}},
+    ...                    index=['Pork', 'Wheat Products', 'Beef'])
+
+    >>> df
+                    consumption  co2_emissions
+    Pork                  10.51         37.20
+    Wheat Products       103.11         19.66
+    Beef                  55.48       1712.00
+
+    By default, it returns the index for the minimum value in each column.
+
+    >>> df.idxmin()
+    consumption                Pork
+    co2_emissions    Wheat Products
+    dtype: object
+
+    To return the index for the minimum value in each row, use ``axis="columns"``.
+
+    >>> df.idxmin(axis="columns")
+    Pork                consumption
+    Wheat Products    co2_emissions
+    Beef                consumption
+    dtype: object
+"""
+
+_shared_docs[
+    "idxmax"
+] = """
+    Return index of first occurrence of maximum over requested axis.
+
+    NA/null values are excluded.
+
+    Parameters
+    ----------
+    axis : {{0 or 'index', 1 or 'columns'}}, default 0
+        The axis to use. 0 or 'index' for row-wise, 1 or 'columns' for column-wise.
+    skipna : bool, default True
+        Exclude NA/null values. If an entire row/column is NA, the result
+        will be NA.
+    numeric_only : bool, default {numeric_only_default}
+        Include only `float`, `int` or `boolean` data.
+
+        .. versionadded:: 1.5.0
+
+    Returns
+    -------
+    Series
+        Indexes of maxima along the specified axis.
+
+    Raises
+    ------
+    ValueError
+        * If the row/column is empty
+
+    See Also
+    --------
+    Series.idxmax : Return index of the maximum element.
+
+    Notes
+    -----
+    This method is the DataFrame version of ``ndarray.argmax``.
+
+    Examples
+    --------
+    Consider a dataset containing food consumption in Argentina.
+
+    >>> df = pd.DataFrame({{'consumption': [10.51, 103.11, 55.48],
+    ...                    'co2_emissions': [37.2, 19.66, 1712]}},
+    ...                    index=['Pork', 'Wheat Products', 'Beef'])
+
+    >>> df
+                    consumption  co2_emissions
+    Pork                  10.51         37.20
+    Wheat Products       103.11         19.66
+    Beef                  55.48       1712.00
+
+    By default, it returns the index for the maximum value in each column.
+
+    >>> df.idxmax()
+    consumption     Wheat Products
+    co2_emissions             Beef
+    dtype: object
+
+    To return the index for the maximum value in each row, use ``axis="columns"``.
+
+    >>> df.idxmax(axis="columns")
+    Pork              co2_emissions
+    Wheat Products     consumption
+    Beef              co2_emissions
     dtype: object
 """

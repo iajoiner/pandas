@@ -176,7 +176,10 @@ class TestRename:
 
         assert np.shares_memory(renamed["foo"]._values, float_frame["C"]._values)
 
-        renamed.loc[:, "foo"] = 1.0
+        with tm.assert_produces_warning(None):
+            # This loc setitem already happens inplace, so no warning
+            #  that this will change in the future
+            renamed.loc[:, "foo"] = 1.0
         assert (float_frame["C"] == 1.0).all()
 
     def test_rename_inplace(self, float_frame):
@@ -184,14 +187,16 @@ class TestRename:
         assert "C" in float_frame
         assert "foo" not in float_frame
 
-        c_id = id(float_frame["C"])
+        c_values = float_frame["C"]
         float_frame = float_frame.copy()
         return_value = float_frame.rename(columns={"C": "foo"}, inplace=True)
         assert return_value is None
 
         assert "C" not in float_frame
         assert "foo" in float_frame
-        assert id(float_frame["foo"]) != c_id
+        # GH 44153
+        # Used to be id(float_frame["foo"]) != c_id, but flaky in the CI
+        assert float_frame["foo"] is not c_values
 
     def test_rename_bug(self):
         # GH 5344
@@ -365,7 +370,6 @@ class TestRename:
         with pytest.raises(TypeError, match=msg):
             df.rename({}, columns={}, index={})
 
-    @td.skip_array_manager_not_yet_implemented
     def test_rename_with_duplicate_columns(self):
         # GH#4403
         df4 = DataFrame(

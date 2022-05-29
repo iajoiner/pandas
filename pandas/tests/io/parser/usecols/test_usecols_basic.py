@@ -174,6 +174,28 @@ def test_usecols_implicit_index_col(all_parsers):
     tm.assert_frame_equal(result, expected)
 
 
+def test_usecols_index_col_middle(all_parsers):
+    # GH#9098
+    parser = all_parsers
+    data = """a,b,c,d
+1,2,3,4
+"""
+    result = parser.read_csv(StringIO(data), usecols=["b", "c", "d"], index_col="c")
+    expected = DataFrame({"b": [2], "d": [4]}, index=Index([3], name="c"))
+    tm.assert_frame_equal(result, expected)
+
+
+def test_usecols_index_col_end(all_parsers):
+    # GH#9098
+    parser = all_parsers
+    data = """a,b,c,d
+1,2,3,4
+"""
+    result = parser.read_csv(StringIO(data), usecols=["b", "c", "d"], index_col="d")
+    expected = DataFrame({"b": [2], "c": [3]}, index=Index([4], name="d"))
+    tm.assert_frame_equal(result, expected)
+
+
 def test_usecols_regex_sep(all_parsers):
     # see gh-2733
     parser = all_parsers
@@ -393,4 +415,22 @@ a,b
     expected = DataFrame({"a": [1], "b": [None]})
     if names is None and parser.engine == "python":
         expected = DataFrame({"a": [1]})
+    tm.assert_frame_equal(result, expected)
+
+
+def test_usecols_additional_columns(all_parsers):
+    # GH#46997
+    parser = all_parsers
+    usecols = lambda header: header.strip() in ["a", "b", "c"]
+    result = parser.read_csv(StringIO("a,b\nx,y,z"), index_col=False, usecols=usecols)
+    expected = DataFrame({"a": ["x"], "b": "y"})
+    tm.assert_frame_equal(result, expected)
+
+
+def test_usecols_additional_columns_integer_columns(all_parsers):
+    # GH#46997
+    parser = all_parsers
+    usecols = lambda header: header.strip() in ["0", "1"]
+    result = parser.read_csv(StringIO("0,1\nx,y,z"), index_col=False, usecols=usecols)
+    expected = DataFrame({"0": ["x"], "1": "y"})
     tm.assert_frame_equal(result, expected)

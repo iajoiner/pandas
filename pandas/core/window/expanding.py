@@ -64,6 +64,8 @@ class Expanding(RollingAndExpandingMixin):
 
         If ``1`` or ``'columns'``, roll across the columns.
 
+        For `Series` this parameter is unused and defaults to 0.
+
     method : str {'single', 'table'}, default 'single'
         Execute the rolling operation per single column or row (``'single'``)
         or over the entire object (``'table'``).
@@ -128,7 +130,7 @@ class Expanding(RollingAndExpandingMixin):
         axis: Axis = 0,
         method: str = "single",
         selection=None,
-    ):
+    ) -> None:
         super().__init__(
             obj=obj,
             min_periods=min_periods,
@@ -227,7 +229,7 @@ class Expanding(RollingAndExpandingMixin):
         template_header,
         create_section_header("Parameters"),
         args_compat,
-        window_agg_numba_parameters,
+        window_agg_numba_parameters(),
         kwargs_compat,
         create_section_header("Returns"),
         template_returns,
@@ -253,7 +255,7 @@ class Expanding(RollingAndExpandingMixin):
         template_header,
         create_section_header("Parameters"),
         args_compat,
-        window_agg_numba_parameters,
+        window_agg_numba_parameters(),
         kwargs_compat,
         create_section_header("Returns"),
         template_returns,
@@ -279,7 +281,7 @@ class Expanding(RollingAndExpandingMixin):
         template_header,
         create_section_header("Parameters"),
         args_compat,
-        window_agg_numba_parameters,
+        window_agg_numba_parameters(),
         kwargs_compat,
         create_section_header("Returns"),
         template_returns,
@@ -305,7 +307,7 @@ class Expanding(RollingAndExpandingMixin):
         template_header,
         create_section_header("Parameters"),
         args_compat,
-        window_agg_numba_parameters,
+        window_agg_numba_parameters(),
         kwargs_compat,
         create_section_header("Returns"),
         template_returns,
@@ -330,7 +332,7 @@ class Expanding(RollingAndExpandingMixin):
     @doc(
         template_header,
         create_section_header("Parameters"),
-        window_agg_numba_parameters,
+        window_agg_numba_parameters(),
         kwargs_compat,
         create_section_header("Returns"),
         template_returns,
@@ -361,6 +363,7 @@ class Expanding(RollingAndExpandingMixin):
         """
         ).replace("\n", "", 1),
         args_compat,
+        window_agg_numba_parameters("1.4"),
         kwargs_compat,
         create_section_header("Returns"),
         template_returns,
@@ -396,9 +399,18 @@ class Expanding(RollingAndExpandingMixin):
         aggregation_description="standard deviation",
         agg_method="std",
     )
-    def std(self, ddof: int = 1, *args, **kwargs):
+    def std(
+        self,
+        ddof: int = 1,
+        *args,
+        engine: str | None = None,
+        engine_kwargs: dict[str, bool] | None = None,
+        **kwargs,
+    ):
         nv.validate_expanding_func("std", args, kwargs)
-        return super().std(ddof=ddof, **kwargs)
+        return super().std(
+            ddof=ddof, engine=engine, engine_kwargs=engine_kwargs, **kwargs
+        )
 
     @doc(
         template_header,
@@ -411,6 +423,7 @@ class Expanding(RollingAndExpandingMixin):
         """
         ).replace("\n", "", 1),
         args_compat,
+        window_agg_numba_parameters("1.4"),
         kwargs_compat,
         create_section_header("Returns"),
         template_returns,
@@ -446,9 +459,18 @@ class Expanding(RollingAndExpandingMixin):
         aggregation_description="variance",
         agg_method="var",
     )
-    def var(self, ddof: int = 1, *args, **kwargs):
+    def var(
+        self,
+        ddof: int = 1,
+        *args,
+        engine: str | None = None,
+        engine_kwargs: dict[str, bool] | None = None,
+        **kwargs,
+    ):
         nv.validate_expanding_func("var", args, kwargs)
-        return super().var(ddof=ddof, **kwargs)
+        return super().var(
+            ddof=ddof, engine=engine, engine_kwargs=engine_kwargs, **kwargs
+        )
 
     @doc(
         template_header,

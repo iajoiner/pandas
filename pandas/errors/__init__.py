@@ -1,12 +1,10 @@
-# flake8: noqa
-
 """
 Expose public exceptions & warnings
 """
 
-from pandas._config.config import OptionError
+from pandas._config.config import OptionError  # noqa:F401
 
-from pandas._libs.tslibs import (
+from pandas._libs.tslibs import (  # noqa:F401
     OutOfBoundsDatetime,
     OutOfBoundsTimedelta,
 )
@@ -95,32 +93,29 @@ class DtypeWarning(Warning):
 
     >>> df = pd.DataFrame({'a': (['1'] * 100000 + ['X'] * 100000 +
     ...                          ['1'] * 100000),
-    ...                    'b': ['b'] * 300000})
-    >>> df.to_csv('test.csv', index=False)
-    >>> df2 = pd.read_csv('test.csv')
+    ...                    'b': ['b'] * 300000})  # doctest: +SKIP
+    >>> df.to_csv('test.csv', index=False)  # doctest: +SKIP
+    >>> df2 = pd.read_csv('test.csv')  # doctest: +SKIP
     ... # DtypeWarning: Columns (0) have mixed types
 
     Important to notice that ``df2`` will contain both `str` and `int` for the
     same input, '1'.
 
-    >>> df2.iloc[262140, 0]
+    >>> df2.iloc[262140, 0]  # doctest: +SKIP
     '1'
-    >>> type(df2.iloc[262140, 0])
+    >>> type(df2.iloc[262140, 0])  # doctest: +SKIP
     <class 'str'>
-    >>> df2.iloc[262150, 0]
+    >>> df2.iloc[262150, 0]  # doctest: +SKIP
     1
-    >>> type(df2.iloc[262150, 0])
+    >>> type(df2.iloc[262150, 0])  # doctest: +SKIP
     <class 'int'>
 
     One way to solve this issue is using the `dtype` parameter in the
     `read_csv` and `read_table` functions to explicit the conversion:
 
-    >>> df2 = pd.read_csv('test.csv', sep=',', dtype={'a': str})
+    >>> df2 = pd.read_csv('test.csv', sep=',', dtype={'a': str})  # doctest: +SKIP
 
     No warning was issued.
-
-    >>> import os
-    >>> os.remove('test.csv')
     """
 
 
@@ -191,7 +186,7 @@ class AbstractMethodError(NotImplementedError):
     while keeping compatibility with Python 2 and Python 3.
     """
 
-    def __init__(self, class_instance, methodtype="method"):
+    def __init__(self, class_instance, methodtype="method") -> None:
         types = {"method", "classmethod", "staticmethod", "property"}
         if methodtype not in types:
             raise ValueError(
@@ -240,4 +235,56 @@ class InvalidIndexError(Exception):
     Exception raised when attempting to use an invalid index key.
 
     .. versionadded:: 1.1.0
+    """
+
+
+class DataError(Exception):
+    """
+    Exception raised when trying to perform a ohlc on a non-numnerical column.
+    Or, it can be raised when trying to apply a function to a non-numerical
+    column on a rolling window.
+    """
+
+
+class SpecificationError(Exception):
+    """
+    Exception raised in two scenarios. The first way is calling agg on a
+    Dataframe or Series using a nested renamer (dict-of-dict).
+    The second way is calling agg on a Dataframe with duplicated functions
+    names without assigning column name.
+
+    Examples
+    --------
+    >>> df = pd.DataFrame({'A': [1, 1, 1, 2, 2],
+    ...                    'B': range(5),
+    ...                    'C': range(5)})
+    >>> df.groupby('A').B.agg({'foo': 'count'}) # doctest: +SKIP
+    ... # SpecificationError: nested renamer is not supported
+
+    >>> df.groupby('A').agg({'B': {'foo': ['sum', 'max']}}) # doctest: +SKIP
+    ... # SpecificationError: nested renamer is not supported
+
+    >>> df.groupby('A').agg(['min', 'min']) # doctest: +SKIP
+    ... # SpecificationError: nested renamer is not supported
+    """
+
+
+class SettingWithCopyError(ValueError):
+    """
+    Exception is raised when trying to set on a copied slice from a dataframe and
+    the mode.chained_assignment is set to 'raise.' This can happen unintentionally
+    when chained indexing.
+
+    For more information, see 'Evaluation order matters' on
+    https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html
+
+    For more information, see 'Indexing view versus copy' on
+    https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html
+
+    Examples
+    --------
+    >>> pd.options.mode.chained_assignment = 'raise'
+    >>> df = pd.DataFrame({'A': [1, 1, 1, 2, 2]}, columns=['A'])
+    >>> df.loc[0:3]['A'] = 'a' # doctest: +SKIP
+    ... # SettingWithCopyError: A value is trying to be set on a copy of a...
     """

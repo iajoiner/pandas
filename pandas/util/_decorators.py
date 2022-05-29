@@ -122,19 +122,19 @@ def deprecate_kwarg(
     >>> f(columns='should work ok')
     should work ok
 
-    >>> f(cols='should raise warning')
+    >>> f(cols='should raise warning')  # doctest: +SKIP
     FutureWarning: cols is deprecated, use columns instead
       warnings.warn(msg, FutureWarning)
     should raise warning
 
-    >>> f(cols='should error', columns="can\'t pass do both")
+    >>> f(cols='should error', columns="can\'t pass do both")  # doctest: +SKIP
     TypeError: Can only specify 'cols' or 'columns', not both
 
     >>> @deprecate_kwarg('old', 'new', {'yes': True, 'no': False})
     ... def f(new=False):
     ...     print('yes!' if new else 'no!')
     ...
-    >>> f(old='yes')
+    >>> f(old='yes')  # doctest: +SKIP
     FutureWarning: old='yes' is deprecated, use new=True instead
       warnings.warn(msg, FutureWarning)
     yes!
@@ -145,14 +145,14 @@ def deprecate_kwarg(
     ... def f(cols='', another_param=''):
     ...     print(cols)
     ...
-    >>> f(cols='should raise warning')
+    >>> f(cols='should raise warning')  # doctest: +SKIP
     FutureWarning: the 'cols' keyword is deprecated and will be removed in a
     future version please takes steps to stop use of 'cols'
     should raise warning
-    >>> f(another_param='should not raise warning')
+    >>> f(another_param='should not raise warning')  # doctest: +SKIP
     should not raise warning
 
-    >>> f(cols='should raise warning', another_param='')
+    >>> f(cols='should raise warning', another_param='')  # doctest: +SKIP
     FutureWarning: the 'cols' keyword is deprecated and will be removed in a
     future version please takes steps to stop use of 'cols'
     should raise warning
@@ -261,6 +261,7 @@ def deprecate_nonkeyword_arguments(
     version: str | None,
     allowed_args: list[str] | None = None,
     stacklevel: int = 2,
+    name: str | None = None,
 ) -> Callable[[F], F]:
     """
     Decorator to deprecate a use of non-keyword arguments of a function.
@@ -281,6 +282,11 @@ def deprecate_nonkeyword_arguments(
 
     stacklevel : int, default=2
         The stack level for warnings.warn
+
+    name : str, optional
+        The specific name of the function to show in the warning
+        message. If None, then the Qualified name of the function
+        is used.
     """
 
     def decorate(func):
@@ -296,7 +302,7 @@ def deprecate_nonkeyword_arguments(
         num_allow_args = len(allow_args)
         msg = (
             f"{future_version_msg(version)} all arguments of "
-            f"{func.__qualname__}{{arguments}} will be keyword-only."
+            f"{name or func.__qualname__}{{arguments}} will be keyword-only."
         )
 
         @wraps(func)
@@ -435,7 +441,7 @@ class Substitution:
         "%s %s wrote the Raven"
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         if args and kwargs:
             raise AssertionError("Only positional or keyword args are allowed")
 
@@ -475,7 +481,7 @@ class Appender:
 
     addendum: str | None
 
-    def __init__(self, addendum: str | None, join: str = "", indents: int = 0):
+    def __init__(self, addendum: str | None, join: str = "", indents: int = 0) -> None:
         if indents > 0:
             self.addendum = indent(addendum, indents=indents)
         else:
